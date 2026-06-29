@@ -1,26 +1,53 @@
 {
   "manifest_version": 3,
   "name": "منصة العدالة لإدارة مكاتب المحاماة",
-  "version": "3.0.0",
-  "description": "أداة هجينة متكاملة (RPA + بوت تلقائي + قراءة شاشة) لسحب البيانات من ناجز ومزامنتها تلقائياً مع منصة العدالة — تفتح المتصفح، تنتظر تسجيل الدخول عبر نفاذ، ثم تسحب جميع البيانات وترسلها للنظام",
-  "permissions": ["activeTab", "storage", "scripting", "tabs"],
-  "host_permissions": ["<all_urls>"],
+  "short_name": "منصة العدالة",
+  "version": "4.0.0",
+  "description": "أداة هجينة متكاملة (RPA + بوت تلقائي + قراءة شاشة + التقاط شبكة) لسحب القضايا والوكالات وطلبات التنفيذ والجلسات والأحكام من ناجز ومزامنتها تلقائياً مع منصة العدالة.",
+  "default_locale": "ar",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "tabs",
+    "alarms",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://najiz.sa/*",
+    "https://www.najiz.sa/*",
+    "https://*.najiz.sa/*",
+    "<all_urls>"
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "منصة العدالة — مزامنة ناجز",
     "default_icon": { "48": "icon.png", "128": "icon.png" }
   },
-  "background": { "service_worker": "background.js" },
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": [
         "https://najiz.sa/*",
+        "https://www.najiz.sa/*",
         "https://*.najiz.sa/*"
       ],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle",
       "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["injected.js", "icon.png"],
+      "matches": [
+        "https://najiz.sa/*",
+        "https://www.najiz.sa/*",
+        "https://*.najiz.sa/*"
+      ]
     }
   ],
   "icons": { "48": "icon.png", "128": "icon.png" }

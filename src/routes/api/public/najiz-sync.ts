@@ -440,13 +440,36 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
             log("executions_done", { affected: data?.length });
           }
 
-          // ---- SESSIONS (linked to existing cases) ----
+          // ---- SESSIONS (linked to existing cases; auto-create placeholder cases for unmatched IDs so sessions are never silently dropped) ----
           if (payload.sessions?.length) {
             log("mapping_sessions", { count: payload.sessions.length });
             const caseIds = Array.from(new Set(payload.sessions.map((s) => s.najiz_case_id)));
             const { data: linkedCases } = await (supabaseAdmin as any)
               .from("cases").select("id, najiz_id").eq("owner_id", owner_id).in("najiz_id", caseIds);
             const map = new Map((linkedCases ?? []).map((c: { najiz_id: string; id: string }) => [c.najiz_id, c.id]));
+
+            // Auto-create placeholder cases for any session referring to a najiz_id that doesn't yet exist
+            const missing = caseIds.filter((id) => !map.has(id));
+            if (missing.length) {
+              log("sessions_auto_create_placeholders", { count: missing.length });
+              const placeholderRows = missing.map((najiz_id) => ({
+                owner_id,
+                najiz_id,
+                case_number: najiz_id.replace(/^case_/, ""),
+                title: `قضية (من جلسة) — ${najiz_id.replace(/^case_/, "")}`,
+                court: null,
+                case_type: "other" as any,
+                status: "open" as any,
+                opened_at: new Date().toISOString().slice(0, 10),
+                najiz_synced_at: new Date().toISOString(),
+              }));
+              const { data: created } = await (supabaseAdmin as any)
+                .from("cases")
+                .upsert(placeholderRows, { onConflict: "owner_id,najiz_id", ignoreDuplicates: false })
+                .select("id, najiz_id");
+              (created ?? []).forEach((c: { najiz_id: string; id: string }) => map.set(c.najiz_id, c.id));
+            }
+
             const rows = payload.sessions
               .filter((s) => map.has(s.najiz_case_id))
               .map((s) => ({
@@ -458,10 +481,19 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
               }));
             total += rows.length;
             if (rows.length) {
-              const { error } = await (supabaseAdmin as any).from("sessions").insert(rows);
-              if (error) {
-                log("sessions_insert_error", error.message);
-                throw new Error(`sessions insert: ${error.message}`);
+              // Deduplicate against existing sessions (same case + date) to avoid double-inserts on resync
+              const dedupeKeys = rows.map((r) => `${r.case_id}|${r.session_date}`);
+              const { data: existingSessions } = await (supabaseAdmin as any)
+                .from("sessions").select("case_id, session_date").in("case_id", rows.map((r) => r.case_id));
+              const existing = new Set((existingSessions ?? []).map((s: any) => `${s.case_id}|${s.session_date}`));
+              const newRows = rows.filter((r, i) => !existing.has(dedupeKeys[i]));
+              if (newRows.length) {
+                const { error } = await (supabaseAdmin as any).from("sessions").insert(newRows);
+                if (error) {
+                  log("sessions_insert_error", error.message);
+                  throw new Error(`sessions insert: ${error.message}`);
+                }
+                inserted += newRows.length;
               }
             }
             log("sessions_done", { affected: rows.length });
@@ -478,6 +510,14 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
                 .from("cases").select("id, najiz_id").eq("owner_id", owner_id).in("najiz_id", caseNumbers);
               caseMap = new Map((linkedCases ?? []).map((c: { najiz_id: string; id: string }) => [c.najiz_id, c.id]));
             }
+            const inferDocType = (title: string) => {
+              const t = (title || "").toLowerCase();
+              if (/استئناف|نقض/.test(t)) return "judgment_appeal" as any;
+              if (/حكم|صك|judgment/.test(t)) return "judgment_final" as any;
+              if (/قرار|decision/.test(t)) return "decision" as any;
+              if (/محضر|ضبط/.test(t)) return "minute" as any;
+              return "lawsuit" as any;
+            };
             const rows = payload.documents.map((d) => ({
               owner_id,
               title: d.title,
@@ -485,16 +525,24 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
               court: d.court ?? null,
               filed_date: d.filed_date ?? null,
               description: d.source_url ? `مصدر: ${d.source_url}` : null,
-              doc_type: "lawsuit" as any,
+              doc_type: inferDocType(d.title),
             }));
             total += rows.length;
             if (rows.length) {
-              const { data, error } = await (supabaseAdmin as any).from("documents").insert(rows).select("id");
-              if (error) {
-                log("documents_insert_error", error.message);
-                throw new Error(`documents insert: ${error.message}`);
+              // Idempotent: skip documents that already exist by (owner_id, title, filed_date)
+              const titles = rows.map((r) => r.title);
+              const { data: existingDocs } = await (supabaseAdmin as any)
+                .from("documents").select("title, filed_date").eq("owner_id", owner_id).in("title", titles);
+              const existSet = new Set((existingDocs ?? []).map((d: any) => `${d.title}|${d.filed_date ?? ""}`));
+              const newRows = rows.filter((r) => !existSet.has(`${r.title}|${r.filed_date ?? ""}`));
+              if (newRows.length) {
+                const { data, error } = await (supabaseAdmin as any).from("documents").insert(newRows).select("id");
+                if (error) {
+                  log("documents_insert_error", error.message);
+                  throw new Error(`documents insert: ${error.message}`);
+                }
+                inserted += data?.length ?? 0;
               }
-              inserted += data?.length ?? 0;
             }
             log("documents_done", { affected: rows.length });
           }

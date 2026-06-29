@@ -64,3 +64,44 @@ WhatsApp notifications, client/employee portals, and case management.
 ## Future / Backlog
 - Hook up Playwright RLS / E2E suites under preview environment.
 - Wire dedicated `/api/*` route for any Stripe / SMS integrations if added.
+
+## Iteration: 2026-06-29 — Najiz Extension v4.0 (Hybrid Bot)
+### What changed
+- **Replaced extension entirely** with a hybrid scraper that merges:
+  - v13's specialized table scrapers (cases / judgments / executions / agencies / sessions)
+  - Network-response capture via injected.js (intercepts fetch + XHR in Najiz)
+  - Screen-visual block detection (for CSS-grid layouts without real <table>)
+  - DOM card fallback for non-tabular pages
+  - The bot autopilot (opens Najiz → waits for Nafath login → navigates 6 pages incl. sub-tabs)
+- **Output now matches the system's `/api/public/najiz-sync` schema exactly**:
+  `{ kind, sourceUrl, cases[], powers[], executions[], sessions[], documents[] }`
+  with ISO `YYYY-MM-DD` dates (Hijri auto-converted) and proper field length limits.
+- **API hardened in `src/routes/api/public/najiz-sync.ts`**:
+  - Sessions: auto-creates placeholder cases for unmatched `najiz_case_id` instead of dropping them
+  - Sessions: deduplicates against existing rows by `(case_id, session_date)`
+  - Documents: idempotent insert by `(owner_id, title, filed_date)` — no more duplicates on resync
+  - Documents: smarter `doc_type` inference (judgment_appeal / judgment_final / decision / minute / lawsuit)
+
+### Extension files (`/app/extension/`)
+- `manifest.json` v4.0.0 — MV3, najiz.sa host + `<all_urls>`, web_accessible `injected.js`
+- `background.js` — service worker, autopilot + retry + correct `X-Sync-Token` POST to `/api/public/najiz-sync`
+- `content.js` — hybrid scraper exposing `window.__ADALA_NAJIZ__.scrape(kindFilter)`
+- `injected.js` — page-context fetch/XHR bridge (captures Najiz network responses)
+- `popup.html` + `popup.js` — navy/gold UI with: bot launch button, cancel, manual sync chips
+- `content.css` — floating FAB on najiz.sa pages
+- `icon.png` — 48/128 size
+
+### Downloadable bundle
+- `/app/public/najiz-helper.zip` (34.5 KB, all 8 files)
+- Served via Vite at `https://<host>/najiz-helper.zip` and downloaded from `/app/najiz` page
+
+### How users install + use
+1. Open the platform → go to "تكامل ناجز" page
+2. Click "تنزيل الإضافة v4.0 (ZIP)" → unzip
+3. Issue a sync token from the same page (right card)
+4. Copy the **Base URL** (auto-detected, stable URL — not the preview URL) + the **token**
+5. Chrome → `chrome://extensions` → Developer mode ON → Load unpacked → select the unzipped folder
+6. Click extension icon → settings (gear) → paste Base URL + token → save (auto-tests)
+7. Click 🚀 "فتح ناجز وتشغيل البوت التلقائي" → log in via Nafath in the opened tab → the bot takes over
+8. Data flows: extension scrapes → POSTs to `/api/public/najiz-sync` → Supabase tables (cases, powers_of_attorney, executions, sessions, documents) → pages in the platform display them
+
