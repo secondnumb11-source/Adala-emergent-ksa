@@ -18,6 +18,7 @@ import { Route as AuthenticatedAppRouteImport } from './routes/_authenticated/ap
 import { Route as AuthenticatedAppIndexRouteImport } from './routes/_authenticated/app.index'
 import { Route as ApiPublicSystemCheckRouteImport } from './routes/api/public/system-check'
 import { Route as ApiPublicNajizSyncRouteImport } from './routes/api/public/najiz-sync'
+import { Route as ApiPublicExtensionDownloadRouteImport } from './routes/api/public/extension-download'
 import { Route as AuthenticatedAppVerificationRouteImport } from './routes/_authenticated/app.verification'
 import { Route as AuthenticatedAppTeamChatRouteImport } from './routes/_authenticated/app.team-chat'
 import { Route as AuthenticatedAppTasksRouteImport } from './routes/_authenticated/app.tasks'
@@ -99,6 +100,12 @@ const ApiPublicNajizSyncRoute = ApiPublicNajizSyncRouteImport.update({
   path: '/api/public/najiz-sync',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicExtensionDownloadRoute =
+  ApiPublicExtensionDownloadRouteImport.update({
+    id: '/api/public/extension-download',
+    path: '/api/public/extension-download',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AuthenticatedAppVerificationRoute =
   AuthenticatedAppVerificationRouteImport.update({
     id: '/verification',
@@ -336,6 +343,7 @@ export interface FileRoutesByFullPath {
   '/app/tasks': typeof AuthenticatedAppTasksRoute
   '/app/team-chat': typeof AuthenticatedAppTeamChatRoute
   '/app/verification': typeof AuthenticatedAppVerificationRoute
+  '/api/public/extension-download': typeof ApiPublicExtensionDownloadRoute
   '/api/public/najiz-sync': typeof ApiPublicNajizSyncRoute
   '/api/public/system-check': typeof ApiPublicSystemCheckRoute
   '/app/': typeof AuthenticatedAppIndexRoute
@@ -380,6 +388,7 @@ export interface FileRoutesByTo {
   '/app/tasks': typeof AuthenticatedAppTasksRoute
   '/app/team-chat': typeof AuthenticatedAppTeamChatRoute
   '/app/verification': typeof AuthenticatedAppVerificationRoute
+  '/api/public/extension-download': typeof ApiPublicExtensionDownloadRoute
   '/api/public/najiz-sync': typeof ApiPublicNajizSyncRoute
   '/api/public/system-check': typeof ApiPublicSystemCheckRoute
   '/app': typeof AuthenticatedAppIndexRoute
@@ -428,6 +437,7 @@ export interface FileRoutesById {
   '/_authenticated/app/tasks': typeof AuthenticatedAppTasksRoute
   '/_authenticated/app/team-chat': typeof AuthenticatedAppTeamChatRoute
   '/_authenticated/app/verification': typeof AuthenticatedAppVerificationRoute
+  '/api/public/extension-download': typeof ApiPublicExtensionDownloadRoute
   '/api/public/najiz-sync': typeof ApiPublicNajizSyncRoute
   '/api/public/system-check': typeof ApiPublicSystemCheckRoute
   '/_authenticated/app/': typeof AuthenticatedAppIndexRoute
@@ -476,6 +486,7 @@ export interface FileRouteTypes {
     | '/app/tasks'
     | '/app/team-chat'
     | '/app/verification'
+    | '/api/public/extension-download'
     | '/api/public/najiz-sync'
     | '/api/public/system-check'
     | '/app/'
@@ -520,6 +531,7 @@ export interface FileRouteTypes {
     | '/app/tasks'
     | '/app/team-chat'
     | '/app/verification'
+    | '/api/public/extension-download'
     | '/api/public/najiz-sync'
     | '/api/public/system-check'
     | '/app'
@@ -567,6 +579,7 @@ export interface FileRouteTypes {
     | '/_authenticated/app/tasks'
     | '/_authenticated/app/team-chat'
     | '/_authenticated/app/verification'
+    | '/api/public/extension-download'
     | '/api/public/najiz-sync'
     | '/api/public/system-check'
     | '/_authenticated/app/'
@@ -587,6 +600,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   ApiAiChatRoute: typeof ApiAiChatRoute
+  ApiPublicExtensionDownloadRoute: typeof ApiPublicExtensionDownloadRoute
   ApiPublicNajizSyncRoute: typeof ApiPublicNajizSyncRoute
   ApiPublicSystemCheckRoute: typeof ApiPublicSystemCheckRoute
   ApiPublicCronSessionRemindersRoute: typeof ApiPublicCronSessionRemindersRoute
@@ -655,6 +669,13 @@ declare module '@tanstack/react-router' {
       path: '/api/public/najiz-sync'
       fullPath: '/api/public/najiz-sync'
       preLoaderRoute: typeof ApiPublicNajizSyncRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/extension-download': {
+      id: '/api/public/extension-download'
+      path: '/api/public/extension-download'
+      fullPath: '/api/public/extension-download'
+      preLoaderRoute: typeof ApiPublicExtensionDownloadRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/app/verification': {
@@ -1019,6 +1040,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   ApiAiChatRoute: ApiAiChatRoute,
+  ApiPublicExtensionDownloadRoute: ApiPublicExtensionDownloadRoute,
   ApiPublicNajizSyncRoute: ApiPublicNajizSyncRoute,
   ApiPublicSystemCheckRoute: ApiPublicSystemCheckRoute,
   ApiPublicCronSessionRemindersRoute: ApiPublicCronSessionRemindersRoute,

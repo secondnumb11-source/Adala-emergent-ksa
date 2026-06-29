@@ -163,12 +163,25 @@ function NajizPage() {
   });
 
   const handleDownload = async () => {
-    const url = "/najiz-helper.zip";
+    // Primary: API endpoint that builds the ZIP on-the-fly from bundled extension
+    // sources — works on every deployment target (preview / Node / Cloudflare).
+    // Fallback: the static /najiz-helper.zip in /public (works in dev / preview).
+    const primary = "/api/public/extension-download";
+    const fallback = "/najiz-helper.zip";
     toast.info("جارٍ تنزيل الإضافة...");
-    console.log("[najiz] downloading extension from", url);
-    try {
+    console.log("[najiz] downloading extension");
+    const tryFetch = async (url: string) => {
+      console.log("[najiz] trying", url);
       const res = await fetch(url, { cache: "no-store" });
-      console.log("[najiz] fetch status", res.status, res.statusText);
+      console.log("[najiz]", url, "→", res.status, res.statusText);
+      return res;
+    };
+    try {
+      let res = await tryFetch(primary);
+      if (!res.ok) {
+        console.warn("[najiz] primary failed, falling back to", fallback);
+        res = await tryFetch(fallback);
+      }
       if (!res.ok) {
         toast.error(`فشل التنزيل: ${res.status} ${res.statusText}`);
         return;
