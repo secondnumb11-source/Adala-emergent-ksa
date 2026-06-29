@@ -14,7 +14,7 @@ const DEFAULT_AUTOPILOT_STEPS = [
 ];
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("[منصة العدالة] الإضافة جاهزة — الإصدار 4.0.0");
+  console.log("[منصة العدالة] الإضافة جاهزة — الإصدار 4.1.0");
 });
 
 // =====================================================

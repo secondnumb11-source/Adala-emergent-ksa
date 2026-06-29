@@ -168,17 +168,19 @@
   // ماسحات الجداول المتخصصة (مأخوذة من v13 العاملة)
   // =====================================================
 
-  // 1) جدول القضايا: رقم القضية | تاريخ القضية | نوع القضية | الصفة | المدعي | المدعى عليه | الحالة
+  // 1) جدول القضايا: مرن جداً لأي جدول يحتوي على رقم قضية + حقول مساعدة
   function scrapeLawsuitTable() {
     const out = [];
     const HEADERS = [
-      { k: "case_number", re: /رقم\s*القضية|رقم\s*الدعوى/ },
-      { k: "opened_at",   re: /تاريخ\s*القضية|تاريخ\s*الدعوى|تاريخ\s*القيد/ },
-      { k: "case_type",   re: /نوع\s*القضية|نوع\s*الدعوى/ },
+      { k: "case_number", re: /رقم\s*القضية|رقم\s*الدعوى|رقم\s*الملف/ },
+      { k: "opened_at",   re: /تاريخ\s*القضية|تاريخ\s*الدعوى|تاريخ\s*القيد|تاريخ\s*الإيداع|تاريخ\s*الفتح/ },
+      { k: "case_type",   re: /نوع\s*القضية|نوع\s*الدعوى|التصنيف/ },
       { k: "capacity",    re: /^الصفة$|الصفة/ },
-      { k: "plaintiff",   re: /^المدعي|المدعي$|صاحب\s*الطلب/ },
+      { k: "plaintiff",   re: /^المدعي|المدعي$|صاحب\s*الطلب|الخصوم/ },
       { k: "defendant",   re: /المدعى\s*عليه|المدعي\s*عليه|الخصم/ },
-      { k: "status",      re: /^الحالة$|حالة\s*القضية/ },
+      { k: "status",      re: /^الحالة$|حالة\s*القضية|حالة\s*الملف/ },
+      { k: "court",       re: /^المحكمة$|اسم\s*المحكمة|الدائرة/ },
+      { k: "subject",     re: /الموضوع|موضوع\s*الدعوى/ },
     ];
     const matchKey = (t) => {
       const c = clean(t);
@@ -190,15 +192,17 @@
     $all("table").forEach((table) => {
       const headers = $all("thead th, thead td", table).map(text);
       const altHeaders = headers.length ? headers : $all("tr:first-child th, tr:first-child td", table).map(text);
-      const ok = altHeaders.some((h) => /رقم\s*القضية|رقم\s*الدعوى/.test(h)) &&
-                 altHeaders.some((h) => /المدعي|نوع\s*القضية|الحالة/.test(h));
+      // More relaxed: any header containing "قضية" OR "دعوى" OR "ملف"
+      const ok = altHeaders.some((h) => /قضية|دعوى|ملف|رقم/i.test(h));
       if (!ok) return;
       const colKeys = altHeaders.map(matchKey);
+      // If no case_number column detected, try to find case-number pattern in cells
+      const hasCaseNumberCol = colKeys.includes("case_number");
       const rows = $all("tbody tr", table).length ? $all("tbody tr", table) : $all("tr", table);
       rows.forEach((row, i) => {
         if (i === 0 && $all("th", row).length && !$all("td", row).length) return;
         const cells = $all("td, th", row).map(text);
-        if (cells.length < 3) return;
+        if (cells.length < 2) return;
         const f = {};
         cells.forEach((v, j) => { const k = colKeys[j]; if (k && v) f[k] = v; });
         if (!f.case_number) {
@@ -206,8 +210,46 @@
           if (found) f.case_number = (found.match(/\d{4}\s*\/\s*\d{3,}|\d{9,}/) || [""])[0].replace(/\s/g, "");
         }
         if (!f.case_number) return;
+        if (!f.title && f.subject) f.title = f.subject;
         out.push({ _kind: "case", fields: f, text: cells.join(" | ") });
       });
+    });
+    return out;
+  }
+
+  // 1.b) Aggressive fallback: any DOM block that visually looks like a case row
+  function scrapeCasesAggressive() {
+    const out = [];
+    const seen = new Set();
+    // Match standalone Najiz case-number patterns like "1234/2024" or "401014502104732" inside text blocks
+    const sel = "div, li, article, section, [role='row'], [role='listitem'], tr, [class*='row'], [class*='item'], [class*='card']";
+    $all(sel).forEach((el) => {
+      if (el.children.length > 30) return; // skip huge containers
+      const t = clean(el.innerText || "");
+      if (!t || t.length < 10 || t.length > 600) return;
+      if (!/قضية|دعوى|الموكل|المدعي|محكمة/.test(t)) return;
+      const cnMatch = t.match(/\d{4}\s*\/\s*\d{3,}|\d{10,}/);
+      if (!cnMatch) return;
+      const cn = cnMatch[0].replace(/\s/g, "");
+      if (seen.has(cn)) return;
+      seen.add(cn);
+      const f = { case_number: cn };
+      // Try to grab type
+      const typeMatch = t.match(/(?:نوع\s*(?:القضية|الدعوى)?\s*[:\-]?\s*)([^\n|،]{2,40})/);
+      if (typeMatch) f.case_type = clean(typeMatch[1]);
+      // status
+      const statusMatch = t.match(/(?:الحالة\s*[:\-]?\s*)([^\n|،]{2,40})/);
+      if (statusMatch) f.status = clean(statusMatch[1]);
+      // court
+      const courtMatch = t.match(/([^\n|،]{0,40}محكمة[^\n|،]{0,40})/);
+      if (courtMatch) f.court = clean(courtMatch[0]);
+      // date
+      const dateMatch = t.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|\d{1,2}[\/\-]\d{1,2}[\/\-]14\d{2}/);
+      if (dateMatch) f.opened_at = dateMatch[0];
+      // plaintiff
+      const plaintiffMatch = t.match(/(?:المدعي|الموكل|صاحب\s*الطلب)\s*[:\-]?\s*([^\n|،]{2,60})/);
+      if (plaintiffMatch) f.plaintiff = clean(plaintiffMatch[1]);
+      out.push({ _kind: "case", fields: f, text: t.slice(0, 400) });
     });
     return out;
   }
@@ -326,24 +368,25 @@
     return out;
   }
 
-  // 5) جدول الجلسات والمواعيد
+  // 5) جدول الجلسات والمواعيد — أكثر مرونة
   function scrapeSessionsTable() {
     const out = [];
     const matchKey = (t) => {
       const c = clean(t);
-      if (/رقم\s*القضية|رقم\s*الدعوى|القضية/.test(c)) return "case_number";
-      if (/تاريخ\s*الجلسة|الموعد|التاريخ/.test(c)) return "session_date";
-      if (/وقت|الساعة|الوقت/.test(c)) return "time";
-      if (/اسم\s*المحكمة|^المحكمة$|المحكمة/.test(c)) return "court";
-      if (/قاعة|الدائرة/.test(c)) return "room";
-      if (/^الحالة$|حالة/.test(c)) return "status";
+      if (/رقم\s*القضية|رقم\s*الدعوى|^القضية$|^الدعوى$/.test(c)) return "case_number";
+      if (/تاريخ\s*الجلسة|^الموعد$|الموعد\s*|^التاريخ$|تاريخ\s*الموعد/.test(c)) return "session_date";
+      if (/^وقت$|الساعة|^الوقت$|توقيت/.test(c)) return "time";
+      if (/اسم\s*المحكمة|^المحكمة$|^محكمة$/.test(c)) return "court";
+      if (/قاعة|^الدائرة$|الدائرة\s*القضائية/.test(c)) return "room";
+      if (/^الحالة$|حالة\s*الجلسة|حالة\s*الموعد/.test(c)) return "status";
+      if (/^النوع$|نوع\s*الجلسة/.test(c)) return "type";
       return null;
     };
     $all("table").forEach((table) => {
       const headers = $all("thead th, thead td", table).map(text);
       const altHeaders = headers.length ? headers : $all("tr:first-child th, tr:first-child td", table).map(text);
-      const ok = altHeaders.some((h) => /تاريخ\s*الجلسة|الموعد|التاريخ/.test(h)) &&
-                 (altHeaders.some((h) => /رقم\s*القضية|المحكمة|قاعة/.test(h)));
+      // Relaxed: any header has "جلسة" OR "موعد" OR "تاريخ" OR "قاعة"
+      const ok = altHeaders.some((h) => /جلسة|موعد|تاريخ|قاعة|الدائرة/.test(h));
       if (!ok) return;
       const colKeys = altHeaders.map(matchKey);
       const rows = $all("tbody tr", table).length ? $all("tbody tr", table) : $all("tr", table);
@@ -361,6 +404,42 @@
           if (found) f.case_number = (found.match(/\d{4}\s*\/\s*\d{3,}|\d{9,}/) || [""])[0].replace(/\s/g, "");
         }
         out.push({ _kind: "session", fields: f, text: cells.join(" | ") });
+      });
+    });
+    return out;
+  }
+
+  // 5.b) Aggressive sessions fallback — any block containing date + case/hearing context
+  function scrapeSessionsAggressive() {
+    const out = [];
+    const seen = new Set();
+    const sel = "div, li, article, section, [role='row'], [role='listitem'], tr, [class*='row'], [class*='item'], [class*='card'], [class*='session'], [class*='hearing'], [class*='appointment']";
+    $all(sel).forEach((el) => {
+      if (el.children.length > 30) return;
+      const t = clean(el.innerText || "");
+      if (!t || t.length < 8 || t.length > 600) return;
+      const dm = t.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|\d{1,2}[\/\-]\d{1,2}[\/\-]14\d{2}/);
+      if (!dm) return;
+      // Must mention hearing/session/court/calendar
+      if (!/جلسة|موعد|محكمة|قضية|دعوى|قاعة|الدائرة|التقويم/.test(t)) return;
+      const date = parseDateISO(dm[0]);
+      if (!date) return;
+      const cn = (t.match(/\d{4}\s*\/\s*\d{3,}|\d{10,}/) || [""])[0].replace(/\s/g, "");
+      const key = `${date}|${cn || t.slice(0, 30)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const courtMatch = t.match(/([^\n|،]{0,40}محكمة[^\n|،]{0,40})/);
+      const roomMatch = t.match(/(?:قاعة|قاعه)\s*(?:رقم)?\s*([\d\u0660-\u0669]+|[^\n|،]{1,20})/);
+      out.push({
+        _kind: "session",
+        fields: {
+          session_date: date,
+          case_number: cn,
+          court: courtMatch ? clean(courtMatch[0]) : undefined,
+          room: roomMatch ? clean(roomMatch[1]) : undefined,
+          status: "قادمة",
+        },
+        text: t.slice(0, 400),
       });
     });
     return out;
@@ -589,15 +668,28 @@
       const allSessions = [...scrapeSessionsTable(), ...scrapeDashboardCalendar()];
       const allJudgments = scrapeJudgmentTable();
 
+      const urlKind = detectKindFromUrl();
+      const focus = kindFilter || urlKind;
+
+      // Aggressive fallback for cases — works on any layout (cards, virtual scroll, custom grid)
+      if ((focus === "cases" || !focus) && allCases.length === 0) {
+        const aggressive = scrapeCasesAggressive();
+        console.log("[منصة العدالة] aggressive cases fallback found:", aggressive.length);
+        allCases.push(...aggressive);
+      }
+
+      // Aggressive fallback for sessions
+      if ((focus === "sessions" || !focus) && allSessions.length === 0) {
+        const aggressive = scrapeSessionsAggressive();
+        console.log("[منصة العدالة] aggressive sessions fallback found:", aggressive.length);
+        allSessions.push(...aggressive);
+      }
+
       console.log("[منصة العدالة] استخلاص خام:", {
         cases: allCases.length, powers: allPowers.length,
         executions: allExecs.length, sessions: allSessions.length,
-        judgments: allJudgments.length,
+        judgments: allJudgments.length, url: location.href,
       });
-
-      // Fallback إلى البطاقات لو ما حصلنا شيء وكنا نتوقع نوع معين
-      const urlKind = detectKindFromUrl();
-      const focus = kindFilter || urlKind;
 
       if (focus === "cases" && allCases.length === 0) {
         collectCards(["القضية", "رقم القضية", "الموضوع", "الدعوى"]).forEach((el, i) => {
@@ -708,7 +800,7 @@
     const menu = document.createElement("div");
     menu.id = "adala-najiz-menu";
     menu.innerHTML = `
-      <div class="ad-title">⚖️ منصة العدالة — مزامنة ناجز v4.0</div>
+      <div class="ad-title">⚖️ منصة العدالة — مزامنة ناجز v4.1</div>
       <button class="ad-primary" id="ad-bot" style="background:linear-gradient(135deg,#16a34a,#065f46);color:#fff;border:1.5px solid #10b981;margin-bottom:6px">🚀 تشغيل البوت (سحب كل الصفحات)</button>
       <button class="ad-primary" data-k="">مزامنة الصفحة الحالية فقط</button>
       <div class="ad-grid">
@@ -785,5 +877,5 @@
     return false;
   });
 
-  console.log("[منصة العدالة v4.0] أداة ناجز الهجينة جاهزة — نوع الصفحة:", detectKindFromUrl());
+  console.log("[منصة العدالة v4.1] أداة ناجز الهجينة جاهزة — نوع الصفحة:", detectKindFromUrl());
 })();
