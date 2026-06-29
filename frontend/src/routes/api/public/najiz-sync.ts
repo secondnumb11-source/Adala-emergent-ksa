@@ -32,6 +32,75 @@ function safeEqHex(a: string, b: string): boolean {
   }
 }
 
+// Manual upsert by (owner_id, najiz_id) — works without DB-level UNIQUE constraint.
+// SELECT existing → split → INSERT new + UPDATE existing (sequentially per-row).
+// Returns { inserted, updated, ids: string[] } where ids are all rows touched.
+async function manualUpsertByNajizId(
+  supabase: any,
+  table: string,
+  ownerId: string,
+  rows: Array<Record<string, any>>,
+  log: (event: string, detail?: any) => void
+): Promise<{ inserted: number; updated: number; ids: string[] }> {
+  if (!rows.length) return { inserted: 0, updated: 0, ids: [] };
+
+  const najizIds = Array.from(new Set(rows.map((r) => r.najiz_id).filter(Boolean)));
+  if (!najizIds.length) {
+    // No najiz_id present → straight insert (rare path)
+    const { data, error } = await supabase.from(table).insert(rows).select("id");
+    if (error) throw new Error(`${table} insert: ${error.message}`);
+    return { inserted: data?.length ?? 0, updated: 0, ids: (data ?? []).map((r: any) => r.id) };
+  }
+
+  // Step 1: SELECT existing rows
+  const { data: existing, error: selErr } = await supabase
+    .from(table)
+    .select("id, najiz_id")
+    .eq("owner_id", ownerId)
+    .in("najiz_id", najizIds);
+  if (selErr) {
+    log(`${table}_select_error`, selErr.message);
+    throw new Error(`${table} select: ${selErr.message}`);
+  }
+  const existingMap = new Map<string, string>(
+    (existing ?? []).map((r: any) => [r.najiz_id, r.id])
+  );
+
+  // Step 2: Split into to-insert vs to-update
+  const toInsert = rows.filter((r) => !existingMap.has(r.najiz_id));
+  const toUpdate = rows.filter((r) => existingMap.has(r.najiz_id));
+
+  const touchedIds: string[] = [];
+  let inserted = 0;
+  let updated = 0;
+
+  // Step 3: INSERT new (batched)
+  if (toInsert.length) {
+    const { data, error } = await supabase.from(table).insert(toInsert).select("id");
+    if (error) {
+      log(`${table}_insert_error`, error.message);
+      throw new Error(`${table} insert: ${error.message}`);
+    }
+    inserted = data?.length ?? 0;
+    (data ?? []).forEach((r: any) => touchedIds.push(r.id));
+  }
+
+  // Step 4: UPDATE existing (one-by-one, by id — only updateable cols, drop owner_id+najiz_id)
+  for (const row of toUpdate) {
+    const id = existingMap.get(row.najiz_id)!;
+    const { owner_id: _o, najiz_id: _n, ...patch } = row;
+    const { error } = await supabase.from(table).update(patch).eq("id", id);
+    if (error) {
+      log(`${table}_update_error`, { id, msg: error.message });
+      throw new Error(`${table} update: ${error.message}`);
+    }
+    updated++;
+    touchedIds.push(id);
+  }
+
+  return { inserted, updated, ids: touchedIds };
+}
+
 // Shape coming from the Chrome extension
 // Reusable field helpers — trim + length bounds + format checks
 const ID = z.string().trim().min(1, "معرّف فارغ").max(120, "معرّف طويل جداً");
@@ -374,16 +443,10 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
               najiz_synced_at: new Date().toISOString(),
             }));
             total += rows.length;
-            const { data, error } = await (supabaseAdmin as any)
-              .from("cases")
-              .upsert(rows, { onConflict: "owner_id,najiz_id", ignoreDuplicates: false })
-              .select("id");
-            if (error) {
-              log("cases_upsert_error", error.message);
-              throw new Error(`cases upsert: ${error.message}`);
-            }
-            inserted += data?.length ?? 0;
-            log("cases_done", { affected: data?.length });
+            const r = await manualUpsertByNajizId(supabaseAdmin, "cases", owner_id, rows, log);
+            inserted += r.inserted;
+            updated += r.updated;
+            log("cases_done", { inserted: r.inserted, updated: r.updated });
           }
 
           // ---- POWERS (separate; never written to executions) ----
@@ -401,16 +464,10 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
               najiz_synced_at: new Date().toISOString(),
             }));
             total += rows.length;
-            const { data, error } = await (supabaseAdmin as any)
-              .from("powers_of_attorney")
-              .upsert(rows, { onConflict: "owner_id,najiz_id" })
-              .select("id");
-            if (error) {
-              log("powers_upsert_error", error.message);
-              throw new Error(`powers upsert: ${error.message}`);
-            }
-            updated += data?.length ?? 0;
-            log("powers_done", { affected: data?.length });
+            const r = await manualUpsertByNajizId(supabaseAdmin, "powers_of_attorney", owner_id, rows, log);
+            inserted += r.inserted;
+            updated += r.updated;
+            log("powers_done", { inserted: r.inserted, updated: r.updated });
           }
 
           // ---- EXECUTIONS (separate target table) ----
@@ -428,16 +485,10 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
               najiz_synced_at: new Date().toISOString(),
             }));
             total += rows.length;
-            const { data, error } = await (supabaseAdmin as any)
-              .from("executions")
-              .upsert(rows, { onConflict: "owner_id,najiz_id" })
-              .select("id");
-            if (error) {
-              log("executions_upsert_error", error.message);
-              throw new Error(`executions upsert: ${error.message}`);
-            }
-            updated += data?.length ?? 0;
-            log("executions_done", { affected: data?.length });
+            const r = await manualUpsertByNajizId(supabaseAdmin, "executions", owner_id, rows, log);
+            inserted += r.inserted;
+            updated += r.updated;
+            log("executions_done", { inserted: r.inserted, updated: r.updated });
           }
 
           // ---- SESSIONS (linked to existing cases; auto-create placeholders for orphans) ----
@@ -466,18 +517,25 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
                 opened_at: new Date().toISOString().slice(0, 10),
                 najiz_synced_at: new Date().toISOString(),
               }));
-              const { data: created, error: pErr } = await (supabaseAdmin as any)
-                .from("cases")
-                .upsert(placeholderRows, { onConflict: "owner_id,najiz_id", ignoreDuplicates: false })
-                .select("id, najiz_id");
+              const { error: pErr } = await (async () => {
+                try {
+                  const r = await manualUpsertByNajizId(supabaseAdmin, "cases", owner_id, placeholderRows, log);
+                  inserted += r.inserted;
+                  return { error: null as any };
+                } catch (e: any) {
+                  return { error: { message: e?.message || String(e) } };
+                }
+              })();
               if (pErr) {
                 log("sessions_placeholder_error", pErr.message);
               } else {
-                for (const c of created ?? []) {
+                // Re-fetch to pull IDs of all (insert+update) placeholders
+                const { data: refetch } = await (supabaseAdmin as any)
+                  .from("cases").select("id, najiz_id").eq("owner_id", owner_id).in("najiz_id", orphanIds);
+                for (const c of refetch ?? []) {
                   map.set((c as any).najiz_id as string, (c as any).id as string);
                 }
-                inserted += (created?.length ?? 0);
-                log("sessions_placeholders_created", { count: created?.length ?? 0 });
+                log("sessions_placeholders_created", { count: refetch?.length ?? 0 });
               }
             }
 
