@@ -224,8 +224,8 @@ export const runRlsTests = createServerFn({ method: "POST" })
     } as never);
     if (!isLawyer && !isAdmin) throw new Error("forbidden: lawyer/admin only");
 
-    const SUPABASE_URL = process.env.SUPABASE_URL!;
-    const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY!;
+    const SUPABASE_URL = process.env.SUPABASE_URL || "https://sofurxihjwgmbosyzeib.supabase.co";
+    const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || "sb_publishable_x3JQ_Rg2zRv69Ke_mW15Rw_djI0Ux4W";
 
 
     const cases: RlsTestCase[] = [];
