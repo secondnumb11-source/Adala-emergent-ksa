@@ -51,7 +51,18 @@ function createSupabaseClient() {
       storage: typeof window !== 'undefined' ? localStorage : undefined,
       persistSession: true,
       autoRefreshToken: true,
-    }
+    },
+    // On the server (SSR / Node 20) the native WebSocket isn't available, so
+    // supply the `ws` package via the realtime transport option. In the
+    // browser this option is ignored — supabase-js uses native WebSocket.
+    ...(typeof window === 'undefined'
+      ? {
+          realtime: {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            transport: (require('ws')) as any,
+          },
+        }
+      : {}),
   });
 }
 

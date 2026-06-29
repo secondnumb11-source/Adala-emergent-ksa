@@ -3,6 +3,7 @@
 // Use this for admin operations in server functions and server routes only.
 // For user-authenticated queries (with RLS), use the auth middleware instead.
 import { createClient } from '@supabase/supabase-js';
+import WebSocket from 'ws';
 import type { Database } from './types';
 
 function isNewSupabaseApiKey(value: string): boolean {
@@ -51,7 +52,10 @@ function createSupabaseAdminClient() {
       storage: undefined,
       persistSession: false,
       autoRefreshToken: false,
-    }
+    },
+    realtime: {
+      transport: WebSocket as any,
+    },
   });
 }
 
