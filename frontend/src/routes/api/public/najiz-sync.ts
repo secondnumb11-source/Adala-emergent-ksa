@@ -440,13 +440,47 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
             log("executions_done", { affected: data?.length });
           }
 
-          // ---- SESSIONS (linked to existing cases) ----
+          // ---- SESSIONS (linked to existing cases; auto-create placeholders for orphans) ----
           if (payload.sessions?.length) {
             log("mapping_sessions", { count: payload.sessions.length });
             const caseIds = Array.from(new Set(payload.sessions.map((s) => s.najiz_case_id)));
             const { data: linkedCases } = await (supabaseAdmin as any)
               .from("cases").select("id, najiz_id").eq("owner_id", owner_id).in("najiz_id", caseIds);
             const map = new Map((linkedCases ?? []).map((c: { najiz_id: string; id: string }) => [c.najiz_id, c.id]));
+
+            // Auto-create placeholder cases for sessions whose case is not yet synced — this
+            // guarantees session data is never silently dropped and shows up immediately in
+            // مواعيد الجلسات. The placeholders can later be enriched when the user syncs the
+            // القضايا page (the upsert key is (owner_id, najiz_id)).
+            const orphanIds = caseIds.filter((nid) => !map.has(nid));
+            if (orphanIds.length) {
+              const placeholderRows = orphanIds.map((nid) => ({
+                owner_id,
+                najiz_id: nid,
+                case_number: nid.startsWith("sess_") || nid.startsWith("cal_") || nid.startsWith("hash_")
+                  ? `جلسة بدون رقم — ${nid.slice(-6)}`
+                  : nid,
+                title: "قضية مرتبطة بجلسة من ناجز (بانتظار اكتمال البيانات)",
+                case_type: "other" as any,
+                status: "open" as any,
+                opened_at: new Date().toISOString().slice(0, 10),
+                najiz_synced_at: new Date().toISOString(),
+              }));
+              const { data: created, error: pErr } = await (supabaseAdmin as any)
+                .from("cases")
+                .upsert(placeholderRows, { onConflict: "owner_id,najiz_id", ignoreDuplicates: false })
+                .select("id, najiz_id");
+              if (pErr) {
+                log("sessions_placeholder_error", pErr.message);
+              } else {
+                for (const c of created ?? []) {
+                  map.set((c as any).najiz_id as string, (c as any).id as string);
+                }
+                inserted += (created?.length ?? 0);
+                log("sessions_placeholders_created", { count: created?.length ?? 0 });
+              }
+            }
+
             const rows = payload.sessions
               .filter((s) => map.has(s.najiz_case_id))
               .map((s) => ({
@@ -455,6 +489,13 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
                 session_date: s.session_date,
                 court: s.court ?? null,
                 room: s.room ?? null,
+                status: (s.status?.includes("منته") || s.status?.includes("منعق"))
+                  ? ("held" as any)
+                  : (s.status?.includes("مؤج")
+                    ? ("postponed" as any)
+                    : (s.status?.includes("ألغ") || s.status?.includes("ملغ")
+                      ? ("cancelled" as any)
+                      : ("scheduled" as any))),
               }));
             total += rows.length;
             if (rows.length) {
@@ -463,6 +504,7 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
                 log("sessions_insert_error", error.message);
                 throw new Error(`sessions insert: ${error.message}`);
               }
+              inserted += rows.length;
             }
             log("sessions_done", { affected: rows.length });
           }
@@ -478,14 +520,40 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
                 .from("cases").select("id, najiz_id").eq("owner_id", owner_id).in("najiz_id", caseNumbers);
               caseMap = new Map((linkedCases ?? []).map((c: { najiz_id: string; id: string }) => [c.najiz_id, c.id]));
             }
-            const rows = payload.documents.map((d) => ({
+            // Idempotency: pre-filter against (owner_id, title, filed_date) so re-running the
+            // bot doesn't duplicate the same judgment / decision / request row.
+            const titles = payload.documents.map((d) => d.title);
+            const { data: existing } = await (supabaseAdmin as any)
+              .from("documents")
+              .select("title, filed_date")
+              .eq("owner_id", owner_id)
+              .in("title", titles);
+            const seen = new Set<string>(
+              (existing ?? []).map((d: any) => `${d.title}|${d.filed_date ?? ""}`)
+            );
+            const fresh = payload.documents.filter((d) => !seen.has(`${d.title}|${d.filed_date ?? ""}`));
+
+            const inferType = (title?: string, status?: string): string => {
+              const t = `${title ?? ""} ${status ?? ""}`;
+              if (/حكم\s*استئناف/.test(t)) return "appeal_judgment";
+              if (/حكم\s*قطعي|قطعي/.test(t)) return "judgment_final";
+              if (/حكم|قرار/.test(t)) return "judgment_non_final";
+              if (/مذكرة|جوابية/.test(t)) return "memorandum_reply";
+              if (/محضر|ضبط/.test(t)) return "session_minutes";
+              if (/طلب|دعوى|صحيفة/.test(t)) return "lawsuit";
+              return "other";
+            };
+
+            const rows = fresh.map((d) => ({
               owner_id,
               title: d.title,
               case_id: d.case_number ? caseMap.get(d.case_number) ?? null : null,
               court: d.court ?? null,
               filed_date: d.filed_date ?? null,
-              description: d.source_url ? `مصدر: ${d.source_url}` : null,
-              doc_type: "lawsuit" as any,
+              description: [d.status ? `الحالة: ${d.status}` : null, d.source_url ? `مصدر: ${d.source_url}` : null]
+                .filter(Boolean)
+                .join("\n") || null,
+              doc_type: inferType(d.title, d.status) as any,
             }));
             total += rows.length;
             if (rows.length) {
@@ -495,8 +563,10 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
                 throw new Error(`documents insert: ${error.message}`);
               }
               inserted += data?.length ?? 0;
+            } else {
+              updated += payload.documents.length; // everything already existed
             }
-            log("documents_done", { affected: rows.length });
+            log("documents_done", { fresh: rows.length, skipped: payload.documents.length - rows.length });
           }
 
 

@@ -36,6 +36,24 @@ WhatsApp notifications, client/employee portals, and case management.
 - App boots cleanly. Landing page (`/`) renders in Arabic with full visuals.
 - All TanStack routes & file-route API handlers are served by Vite.
 
+## Iteration: 2026-06-29 — Najiz Bot v3.1 (RPA + screen reading + text fallback)
+- Rewrote `extension/content.js` (v3.1): stable hash-based fallback IDs (re-syncs no
+  longer duplicate records), iframe recursion + CDK virtual-scroll triggering,
+  HH:mm time extraction for sessions, dedicated text-mode fallback parser that
+  walks `innerText` blocks with Arabic label regexes when DOM tables are missing.
+- Strengthened `src/routes/api/public/najiz-sync.ts`:
+  - **Sessions are never dropped** — when a session's `najiz_case_id` isn't yet
+    in `cases`, the API now auto-upserts a placeholder case so the session
+    appears immediately in *مواعيد الجلسات* and can be enriched later.
+  - **Documents are idempotent** — pre-filters by `(owner_id, title, filed_date)`
+    so re-running the bot no longer duplicates rows in the archive.
+  - **Smarter `doc_type` inference** — judgments → `judgment_*`, decisions →
+    `judgment_non_final`, memos → `memorandum_reply`, etc., so each item lands
+    in its correct sub-section inside *أرشيف المستندات والأحكام*.
+- Bumped `manifest.json` to **3.1.0**, updated UI copy on `/app/najiz`, and
+  rebuilt `public/adala-najiz-extension.zip` + `public/najiz-helper.zip` so the
+  user can download and load-unpacked the new extension directly.
+
 ## Next Action Items
 - Replace placeholder `GEMINI_API_KEY` / `OPENAI_API_KEY` in
   `/app/frontend/.env` to enable the AI legal consultant.

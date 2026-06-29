@@ -1,7 +1,9 @@
-// منصة العدالة — background service worker v3.0
+// منصة العدالة — background service worker v3.1
 // Hybrid autopilot: opens Najiz, waits for manual Nafath login,
 // then navigates every Najiz section + sub-tabs, auto-scrolls,
 // and POSTs the scraped JSON to /api/public/najiz-sync.
+// v3.1: stable hash IDs · session time extraction · text-mode fallback
+// · auto-create placeholder cases for orphan sessions on the server side.
 
 const NAJIZ_LOGIN_URL = "https://najiz.sa";
 
@@ -20,7 +22,7 @@ const DEFAULT_AUTOPILOT_STEPS = [
 ];
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("[منصة العدالة] الإضافة جاهزة — الإصدار 3.0.0 (RPA الهجين المتقدم)");
+  console.log("[منصة العدالة] الإضافة جاهزة — الإصدار 3.1.0 (RPA الهجين المتقدم + قراءة نصية احتياطية)");
 });
 
 // ---------- Helpers ----------

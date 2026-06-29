@@ -237,8 +237,8 @@ function NajizPage() {
         <Card className="card-3d border-none p-6">
           <div className="flex items-start justify-between mb-4">
             <div>
-              <h3 className="font-bold text-lg">إضافة متصفح Chrome v3.0</h3>
-              <p className="text-xs text-muted-foreground mt-1">أداة هجينة متكاملة: بوت RPA يفتح ناجز، ينتظر تسجيل دخولك عبر نفاذ، ثم يسحب جميع البيانات تلقائياً ويرسلها للنظام</p>
+              <h3 className="font-bold text-lg">إضافة متصفح Chrome v3.1</h3>
+              <p className="text-xs text-muted-foreground mt-1">أداة هجينة متكاملة: بوت RPA يفتح ناجز، ينتظر تسجيل دخولك عبر نفاذ، ثم يسحب جميع البيانات تلقائياً ويرسلها للنظام — مع تنظيمها في أقسامها المخصصة فوراً</p>
             </div>
             <div className="grid h-12 w-12 place-items-center rounded-xl bg-primary/10">
               <Download className="h-6 w-6 text-primary" />
@@ -255,7 +255,7 @@ function NajizPage() {
             <strong>آلية العمل:</strong> البوت يفتح المتصفح ← ينتظر تسجيل الدخول يدوياً (نفاذ) ← يتنقل تلقائياً بين (القضايا/الأحكام/القرارات/الطلبات/التنفيذ/الوكالات/الجلسات) ← يمرر كل صفحة ← يسحب البيانات ← يرسلها للنظام ← النظام يوزعها على الأقسام المخصصة
           </div>
           <Button onClick={handleDownload} className="btn-gold gap-2 w-full">
-            <Download className="h-4 w-4" /> تنزيل الإضافة v3.0 (ZIP)
+            <Download className="h-4 w-4" /> تنزيل الإضافة v3.1 (ZIP)
           </Button>
         </Card>
 
