@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "منصة العدالة - مزامنة ناجز",
+  "version": "2.0.0",
+  "description": "سحب بيانات القضايا والجلسات والوكالات وطلبات التنفيذ من منصة ناجز وإرسالها إلى منصة العدالة",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://najiz.sa/*",
+    "https://*.najiz.sa/*",
+    "https://kindly-kangaroo-665.convex.site/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://najiz.sa/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "منصة العدالة - مزامنة ناجز",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

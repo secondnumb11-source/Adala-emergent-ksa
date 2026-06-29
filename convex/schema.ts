@@ -1,0 +1,106 @@
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  users: defineTable({
+    tokenIdentifier: v.string(),
+    name: v.optional(v.string()),
+    email: v.optional(v.string()),
+  }).index("by_token", ["tokenIdentifier"]),
+
+  api_keys: defineTable({
+    userId: v.id("users"),
+    keyHash: v.string(),
+    keyPrefix: v.string(),
+    label: v.optional(v.string()),
+    lastUsed: v.optional(v.string()),
+    isActive: v.boolean(),
+  }).index("by_user", ["userId"]).index("by_hash", ["keyHash"]),
+
+  cases: defineTable({
+    userId: v.id("users"),
+    caseNumber: v.string(),
+    caseTitle: v.optional(v.string()),
+    court: v.optional(v.string()),
+    caseType: v.optional(v.string()),
+    status: v.optional(v.string()),
+    filingDate: v.optional(v.string()),
+    nextSessionDate: v.optional(v.string()),
+    plaintiff: v.optional(v.string()),
+    defendant: v.optional(v.string()),
+    rawData: v.optional(v.string()),
+    syncedAt: v.string(),
+    sourceUrl: v.optional(v.string()),
+  }).index("by_user", ["userId"]).index("by_user_case", ["userId", "caseNumber"]),
+
+  sessions: defineTable({
+    userId: v.id("users"),
+    sessionDate: v.string(),
+    sessionTime: v.optional(v.string()),
+    court: v.optional(v.string()),
+    caseNumber: v.optional(v.string()),
+    caseTitle: v.optional(v.string()),
+    sessionType: v.optional(v.string()),
+    sessionStatus: v.optional(v.string()),
+    hall: v.optional(v.string()),
+    judge: v.optional(v.string()),
+    rawData: v.optional(v.string()),
+    syncedAt: v.string(),
+    sourceUrl: v.optional(v.string()),
+  }).index("by_user", ["userId"]).index("by_user_date", ["userId", "sessionDate"]),
+
+  agencies: defineTable({
+    userId: v.id("users"),
+    agencyNumber: v.string(),
+    agencyType: v.optional(v.string()),
+    clientName: v.optional(v.string()),
+    clientId: v.optional(v.string()),
+    issueDate: v.optional(v.string()),
+    expiryDate: v.optional(v.string()),
+    status: v.optional(v.string()),
+    scope: v.optional(v.string()),
+    rawData: v.optional(v.string()),
+    syncedAt: v.string(),
+    sourceUrl: v.optional(v.string()),
+  }).index("by_user", ["userId"]).index("by_user_agency", ["userId", "agencyNumber"]),
+
+  execution_requests: defineTable({
+    userId: v.id("users"),
+    requestNumber: v.string(),
+    requestType: v.optional(v.string()),
+    court: v.optional(v.string()),
+    status: v.optional(v.string()),
+    filingDate: v.optional(v.string()),
+    plaintiff: v.optional(v.string()),
+    defendant: v.optional(v.string()),
+    amount: v.optional(v.string()),
+    rawData: v.optional(v.string()),
+    syncedAt: v.string(),
+    sourceUrl: v.optional(v.string()),
+  }).index("by_user", ["userId"]).index("by_user_request", ["userId", "requestNumber"]),
+
+  documents: defineTable({
+    userId: v.id("users"),
+    caseNumber: v.optional(v.string()),
+    documentType: v.optional(v.string()),
+    title: v.optional(v.string()),
+    submissionDate: v.optional(v.string()),
+    status: v.optional(v.string()),
+    content: v.optional(v.string()),
+    rawData: v.optional(v.string()),
+    syncedAt: v.string(),
+    sourceUrl: v.optional(v.string()),
+  }).index("by_user", ["userId"]).index("by_user_case", ["userId", "caseNumber"]),
+
+  sync_logs: defineTable({
+    userId: v.id("users"),
+    syncedAt: v.string(),
+    casesCount: v.number(),
+    sessionsCount: v.number(),
+    agenciesCount: v.number(),
+    executionCount: v.number(),
+    documentsCount: v.number(),
+    status: v.string(),
+    errorMessage: v.optional(v.string()),
+  }).index("by_user", ["userId"]),
+});

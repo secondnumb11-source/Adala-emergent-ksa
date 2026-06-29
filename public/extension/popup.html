@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <title>منصة العدالة - مزامنة ناجز</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { width: 380px; font-family: 'Segoe UI', Tahoma, Arial, sans-serif; background: #f8f9fa; direction: rtl; }
+    .header { background: linear-gradient(135deg, #1a2744 0%, #243363 100%); color: white; padding: 16px 18px; display: flex; align-items: center; gap: 10px; }
+    .header-title { font-size: 15px; font-weight: bold; }
+    .header-sub { font-size: 11px; opacity: 0.7; margin-top: 2px; }
+    .section { padding: 14px 16px; border-bottom: 1px solid #e9ecef; }
+    .section-title { font-size: 12px; font-weight: 600; color: #6c757d; text-transform: uppercase; margin-bottom: 10px; }
+    .input-group { margin-bottom: 10px; }
+    .input-label { font-size: 12px; color: #495057; margin-bottom: 4px; display: block; }
+    .input-field { width: 100%; padding: 8px 10px; border: 1px solid #dee2e6; border-radius: 6px; font-size: 12px; color: #212529; background: white; direction: ltr; }
+    .input-field:focus { outline: none; border-color: #1a2744; }
+    .btn { width: 100%; padding: 10px; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .btn-primary { background: linear-gradient(135deg, #1a2744 0%, #243363 100%); color: white; }
+    .btn-primary:hover { opacity: 0.9; } .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary { background: white; color: #1a2744; border: 1px solid #1a2744; margin-top: 8px; }
+    .btn-secondary:hover { background: #f0f2f5; }
+    .btn-verify { width: auto; padding: 6px 12px; font-size: 11px; background: #e8f0fe; color: #1a2744; margin-top: 6px; }
+    .status-bar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 8px; font-size: 12px; margin-bottom: 10px; }
+    .status-bar.idle { background: #f1f3f4; color: #5f6368; } .status-bar.running { background: #e8f5e9; color: #2e7d32; } .status-bar.error { background: #fde8e8; color: #c62828; } .status-bar.success { background: #e8f5e9; color: #1b5e20; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+    .status-dot.pulse { animation: pulse 1.2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .progress-container { margin-bottom: 10px; }
+    .progress-label { font-size: 11px; color: #6c757d; margin-bottom: 4px; }
+    .progress-bar { height: 6px; background: #e9ecef; border-radius: 3px; overflow: hidden; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, #1a2744, #c9a227); border-radius: 3px; transition: width 0.4s ease; }
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+    .stat-card { background: white; border: 1px solid #e9ecef; border-radius: 8px; padding: 8px; text-align: center; }
+    .stat-number { font-size: 20px; font-weight: bold; color: #1a2744; }
+    .stat-label { font-size: 10px; color: #6c757d; margin-top: 2px; }
+    .log-container { max-height: 100px; overflow-y: auto; background: #1e1e1e; border-radius: 6px; padding: 8px; }
+    .log-entry { font-size: 11px; color: #d4d4d4; line-height: 1.6; } .log-entry.success { color: #4ec9b0; } .log-entry.error { color: #f48771; } .log-entry.info { color: #9cdcfe; }
+    .najiz-open-btn { background: linear-gradient(135deg, #c9a227 0%, #b8911f 100%); color: white; margin-top: 8px; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 10px; font-weight: 600; }
+    .tag-logged-in { background: #e8f5e9; color: #2e7d32; } .tag-logged-out { background: #fde8e8; color: #c62828; }
+    #login-status { margin-bottom: 10px; display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div style="font-size:22px">⚖️</div>
+    <div><div class="header-title">منصة العدالة</div><div class="header-sub">مزامنة ناجز التلقائية v2.0</div></div>
+  </div>
+  <div class="section" id="settings-section">
+    <div class="section-title">⚙️ الإعدادات</div>
+    <div class="input-group">
+      <label class="input-label">رابط API للنظام</label>
+      <input type="text" id="api-url" class="input-field" placeholder="https://kindly-kangaroo-665.convex.site/najiz/sync" />
+    </div>
+    <div class="input-group">
+      <label class="input-label">مفتاح API (من إعدادات النظام)</label>
+      <input type="password" id="api-key" class="input-field" placeholder="adala_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+    </div>
+    <div style="display:flex;gap:6px;">
+      <button class="btn btn-secondary btn-verify" id="btn-save">💾 حفظ</button>
+      <button class="btn btn-secondary btn-verify" id="btn-verify">✓ تحقق من المفتاح</button>
+    </div>
+    <div id="verify-result" style="margin-top:6px;font-size:11px;"></div>
+  </div>
+  <div class="section">
+    <div class="section-title">📊 الحالة</div>
+    <div id="login-status"><span>حالة ناجز:</span><span class="tag tag-logged-out" id="login-tag">غير متصل</span></div>
+    <div class="status-bar idle" id="status-bar"><div class="status-dot" id="status-dot"></div><span id="status-text">جاهز للمزامنة</span></div>
+    <div class="progress-container" id="progress-container" style="display:none;">
+      <div class="progress-label" id="progress-label">جاري المعالجة...</div>
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-number" id="stat-cases">0</div><div class="stat-label">قضية</div></div>
+      <div class="stat-card"><div class="stat-number" id="stat-sessions">0</div><div class="stat-label">جلسة</div></div>
+      <div class="stat-card"><div class="stat-number" id="stat-agencies">0</div><div class="stat-label">وكالة</div></div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-number" id="stat-execution">0</div><div class="stat-label">تنفيذ</div></div>
+      <div class="stat-card"><div class="stat-number" id="stat-documents">0</div><div class="stat-label">مستند</div></div>
+      <div class="stat-card"><div class="stat-number" id="stat-total">0</div><div class="stat-label">إجمالي</div></div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title">🚀 التحكم</div>
+    <button class="btn btn-primary" id="btn-sync" disabled><span>🔄</span> بدء المزامنة الكاملة</button>
+    <button class="btn btn-secondary najiz-open-btn" id="btn-open-najiz"><span>🌐</span> فتح ناجز لتسجيل الدخول</button>
+    <button class="btn btn-secondary" id="btn-stop" style="display:none;margin-top:8px;">⏹ إيقاف المزامنة</button>
+  </div>
+  <div class="section" style="border-bottom:none;">
+    <div class="section-title">📋 السجل</div>
+    <div class="log-container"><div class="log-entry info">مرحباً! قم بإعداد المفتاح ثم افتح ناجز لتسجيل الدخول.</div></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
