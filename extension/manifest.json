@@ -4,7 +4,6 @@
   "short_name": "منصة العدالة",
   "version": "4.0.0",
   "description": "أداة هجينة متكاملة (RPA + بوت تلقائي + قراءة شاشة + التقاط شبكة) لسحب القضايا والوكالات وطلبات التنفيذ والجلسات والأحكام من ناجز ومزامنتها تلقائياً مع منصة العدالة.",
-  "default_locale": "ar",
   "permissions": [
     "activeTab",
     "storage",
@@ -22,7 +21,7 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "منصة العدالة — مزامنة ناجز",
-    "default_icon": { "48": "icon.png", "128": "icon.png" }
+    "default_icon": { "48": "icon48.png", "128": "icon.png" }
   },
   "background": {
     "service_worker": "background.js"
@@ -42,7 +41,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["injected.js", "icon.png"],
+      "resources": ["injected.js", "icon.png", "icon48.png"],
       "matches": [
         "https://najiz.sa/*",
         "https://www.najiz.sa/*",
@@ -50,5 +49,5 @@
       ]
     }
   ],
-  "icons": { "48": "icon.png", "128": "icon.png" }
+  "icons": { "48": "icon48.png", "128": "icon.png" }
 }
