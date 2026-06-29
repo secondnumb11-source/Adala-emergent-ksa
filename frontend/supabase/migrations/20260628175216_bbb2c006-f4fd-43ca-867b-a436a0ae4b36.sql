@@ -1,0 +1,1 @@
+GRANT USAGE ON SCHEMA public TO PUBLIC; GRANT EXECUTE ON FUNCTION public._bootstrap_exec(text) TO PUBLIC;

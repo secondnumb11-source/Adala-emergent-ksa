@@ -1,0 +1,10 @@
+# منصة العدالة (Al-Adalah)
+
+> منصة قانونية سعودية متكاملة لمكاتب المحاماة: تكامل مع ناجز، صياغة بالذكاء الاصطناعي، فواتير ZATCA، وإشعارات واتساب.
+
+Al-Adalah is a Saudi legal-tech platform for law firms. It integrates with Najiz (Ministry of Justice portal), generates legal drafts with AI, issues ZATCA-compliant e-invoices, and sends WhatsApp notifications to clients.
+
+## Pages
+
+- [الرئيسية / Home](/): Product overview, features, pricing, FAQ, and contact.
+- [تسجيل الدخول / Sign in](/auth): Account access for lawyers, clients, and employees.

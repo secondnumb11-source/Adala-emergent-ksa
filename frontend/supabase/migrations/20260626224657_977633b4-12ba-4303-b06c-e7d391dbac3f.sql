@@ -1,0 +1,1 @@
+REVOKE EXECUTE ON FUNCTION public.enqueue_task_reminders() FROM authenticated;

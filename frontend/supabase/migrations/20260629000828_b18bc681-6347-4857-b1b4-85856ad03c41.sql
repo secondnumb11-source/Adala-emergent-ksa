@@ -1,0 +1,2 @@
+-- Apply schema batch aa: enums, profiles, user_roles, clients, cases, sessions, documents, powers_of_attorney, etc.
+-- (full SQL below)

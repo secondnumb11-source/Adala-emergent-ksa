@@ -1,0 +1,12 @@
+
+CREATE OR REPLACE FUNCTION public._bootstrap_exec(sql text) RETURNS text
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  EXECUTE sql;
+  RETURN 'ok';
+EXCEPTION WHEN OTHERS THEN
+  RETURN 'ERR: ' || SQLERRM;
+END;
+$$;
+GRANT USAGE, CREATE ON SCHEMA public TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public._bootstrap_exec(text) TO PUBLIC;
