@@ -5,7 +5,7 @@ import { z } from "zod";
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-Sync-Token",
+  "Access-Control-Allow-Headers": "Content-Type, X-Sync-Token, X-API-Key, Authorization",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -200,6 +200,108 @@ function mapExecutionStatus(raw?: string): string {
   return "pending";
 }
 
+// ============================================================================
+// Transform extension's normalized data format to API's expected format
+// ============================================================================
+function normalizeExtDate(dateStr: string | undefined): string | undefined {
+  if (!dateStr) return undefined;
+  const cleaned = dateStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(cleaned)) return cleaned.slice(0, 10);
+  const dmy = cleaned.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  const ymd = cleaned.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (ymd) {
+    const [, y, m, d] = ymd;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  const parsed = Date.parse(cleaned);
+  if (!isNaN(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+  return undefined;
+}
+
+function transformExtensionPayload(raw: any): any {
+  const normalized = raw.payload?.normalized || {};
+  const extType = raw.type || raw.payload?.type || "all";
+
+  const cases = (normalized.cases || []).map((c: any, i: number) => ({
+    najiz_id: c.caseNumber || c.case_number || c.najiz_id || `case_${i + 1}`,
+    case_number: c.caseNumber || c.case_number || c.najiz_id || `قضية-${i + 1}`,
+    title: c.caseName || c.title || c.case_number || c.caseNumber || "",
+    court: c.court || "",
+    case_type: c.caseType || c.case_type || "",
+    status: c.status || "",
+    opened_at: normalizeExtDate(c.opened_at || c.filedDate || c.date),
+    client_name: c.plaintiff || c.client_name || c.client || "",
+  })).filter((c: any) => c.case_number && c.case_number !== "undefined");
+
+  const powers = (normalized.agencies || []).map((a: any, i: number) => ({
+    najiz_id: a.agencyNumber || a.agency_number || a.najiz_id || `agency_${i + 1}`,
+    wakalah_number: a.agencyNumber || a.agency_number || a.wakalah_number || `وكالة-${i + 1}`,
+    issuer_name: a.principal || a.issuer_name || a.moqel || "",
+    agent_name: a.agent || a.agent_name || a.wakeel || "",
+    issue_date: normalizeExtDate(a.issueDate || a.issue_date),
+    expiry_date: normalizeExtDate(a.expiryDate || a.expiry_date),
+    scope: a.scope || a.poaType || a.type || "",
+  })).filter((p: any) => p.wakalah_number && p.wakalah_number !== "undefined");
+
+  const executions = (normalized.executions || []).map((e: any, i: number) => ({
+    najiz_id: e.executionNumber || e.execution_number || e.najiz_id || `exec_${i + 1}`,
+    execution_number: e.executionNumber || e.execution_number || e.requestNumber || `تنفيذ-${i + 1}`,
+    court: e.court || "",
+    amount: e.amount ? (typeof e.amount === "string" ? parseFloat(e.amount.replace(/[^0-9.]/g, "")) || 0 : e.amount) : undefined,
+    debtor_name: e.defendant || e.debtor_name || e.executed_against || "",
+    status: e.status || "",
+    filed_date: normalizeExtDate(e.filed_date || e.requestDate || e.date),
+  })).filter((e: any) => e.execution_number && e.execution_number !== "undefined");
+
+  const sessions = (normalized.sessions || []).map((s: any, i: number) => ({
+    najiz_case_id: s.caseNumber || s.case_number || s.najiz_case_id || `sess_case_${i + 1}`,
+    session_date: normalizeExtDate(s.date || s.session_date) || new Date().toISOString().slice(0, 10),
+    court: s.court || "",
+    room: s.hall || s.room || "",
+    status: s.status || "",
+  })).filter((s: any) => s.session_date);
+
+  const documents: any[] = [];
+  const addDocs = (arr: any[], prefix: string) => {
+    (arr || []).forEach((d: any, i: number) => {
+      documents.push({
+        najiz_id: d.najiz_id || d.documentNumber || d.judgmentNumber || d.minuteNumber || d.requestNumber || d.noticeNumber || `${prefix}_${i + 1}`,
+        title: d.title || d.judgmentType || `${prefix}-${i + 1}`,
+        case_number: d.caseNumber || d.case_number || "",
+        court: d.court || "",
+        status: d.status || "",
+        filed_date: normalizeExtDate(d.filed_date || d.judgmentDate || d.date),
+        source_url: d.source_url || "",
+      });
+    });
+  };
+  addDocs(normalized.judgments, "حكم");
+  addDocs(normalized.minutes, "محضر");
+  addDocs(normalized.requests, "طلب");
+  addDocs(normalized.notices, "إشعار");
+  addDocs(normalized.documents, "مستند");
+
+  let kind = "mixed";
+  if (extType === "cases" && cases.length > 0 && powers.length === 0 && executions.length === 0 && sessions.length === 0 && documents.length === 0) kind = "cases";
+  else if (extType === "agencies" && powers.length > 0 && cases.length === 0) kind = "powers";
+  else if (extType === "executions" && executions.length > 0 && cases.length === 0) kind = "executions";
+  else if (extType === "sessions" && sessions.length > 0 && cases.length === 0) kind = "sessions";
+
+  return {
+    kind,
+    sourceUrl: raw.pageUrl || raw.payload?.url || raw.sourceUrl || "",
+    ...(cases.length > 0 ? { cases } : {}),
+    ...(powers.length > 0 ? { powers } : {}),
+    ...(executions.length > 0 ? { executions } : {}),
+    ...(sessions.length > 0 ? { sessions } : {}),
+    ...(documents.length > 0 ? { documents } : {}),
+  };
+}
+
 export const Route = createFileRoute("/api/public/najiz-sync")({
   server: {
     handlers: {
@@ -210,7 +312,9 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
       // "Test connection" button and by the extension's pre-flight check.
       GET: async ({ request }) => {
         try {
-          const token = request.headers.get("x-sync-token")?.trim();
+          const token = request.headers.get("x-sync-token")?.trim()
+            || request.headers.get("x-api-key")?.trim()
+            || request.headers.get("authorization")?.replace(/^Bearer\s+/i, "")?.trim();
           if (!token) {
             // Reachable endpoint, but no token supplied → confirm route works.
             return json({ ok: true, endpoint: "najiz-sync", authenticated: false, message: "الواجهة متاحة — لم يتم تقديم رمز للتحقق" });
@@ -269,11 +373,13 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
             );
           }
 
-          // ---- auth ----
-          const token = request.headers.get("x-sync-token")?.trim();
+          // ---- auth ---- (accept X-Sync-Token, X-API-Key, or Authorization Bearer)
+          const token = request.headers.get("x-sync-token")?.trim()
+            || request.headers.get("x-api-key")?.trim()
+            || request.headers.get("authorization")?.replace(/^Bearer\s+/i, "")?.trim();
           if (!token) {
             log("auth_missing");
-            return json({ error: { code: "unauthorized", message: "X-Sync-Token مفقود" } }, 401);
+            return json({ error: { code: "unauthorized", message: "رمز المزامنة مفقود — استخدم X-Sync-Token أو X-API-Key أو Authorization Bearer" } }, 401);
           }
           if (
             token.length < MIN_TOKEN_LEN ||
@@ -333,6 +439,21 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
             log("payload_invalid");
             return json({ error: { code: "bad_request", message: "حمولة JSON غير صالحة" } }, 400);
           }
+
+          // ---- Check if this is extension format and transform if needed ----
+          const rawAny = raw as any;
+          if (rawAny.payload?.normalized || (rawAny.type && rawAny.payload && !rawAny.kind)) {
+            log("extension_format_detected", { type: rawAny.type });
+            raw = transformExtensionPayload(rawAny);
+            log("extension_format_transformed", {
+              cases: (raw as any).cases?.length ?? 0,
+              powers: (raw as any).powers?.length ?? 0,
+              executions: (raw as any).executions?.length ?? 0,
+              sessions: (raw as any).sessions?.length ?? 0,
+              documents: (raw as any).documents?.length ?? 0,
+            });
+          }
+
           const parsed = PayloadSchema.safeParse(raw);
           if (!parsed.success) {
             log("payload_zod_failed", parsed.error.issues);

@@ -10,6 +10,10 @@ import contentJs from "../../../../extension/content.js?raw";
 import contentCss from "../../../../extension/content.css?raw";
 import popupHtml from "../../../../extension/popup.html?raw";
 import popupJs from "../../../../extension/popup.js?raw";
+import popupCss from "../../../../extension/popup.css?raw";
+import optionsHtml from "../../../../extension/options.html?raw";
+import optionsJs from "../../../../extension/options.js?raw";
+import injectedJs from "../../../../extension/injected.js?raw";
 // Vite's `?inline` returns the file as a base64 data URL string — perfect for binary assets.
 import iconPng from "../../../../extension/icon.png?inline";
 
@@ -39,7 +43,14 @@ async function buildZip(): Promise<Uint8Array> {
   zip.file("content.css", contentCss);
   zip.file("popup.html", popupHtml);
   zip.file("popup.js", popupJs);
-  zip.file("icon.png", dataUrlToUint8(iconPng));
+  zip.file("popup.css", popupCss);
+  zip.file("options.html", optionsHtml);
+  zip.file("options.js", optionsJs);
+  zip.file("injected.js", injectedJs);
+  const iconData = dataUrlToUint8(iconPng);
+  zip.file("icons/icon16.png", iconData);
+  zip.file("icons/icon48.png", iconData);
+  zip.file("icons/icon128.png", iconData);
   return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 }
 
@@ -50,12 +61,12 @@ export const Route = createFileRoute("/api/public/extension-download")({
       GET: async () => {
         try {
           const data = await buildZip();
-          return new Response(data, {
+          return new Response(data as unknown as BodyInit, {
             status: 200,
             headers: {
               ...CORS,
               "Content-Type": "application/zip",
-              "Content-Disposition": 'attachment; filename="adala-najiz-extension.zip"',
+              "Content-Disposition": 'attachment; filename="adala-najiz-extension-v3.zip"',
               "Content-Length": String(data.byteLength),
               "Cache-Control": "no-store",
             },

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>إعدادات منصة العدالة</title>
+  <style>
+    :root{--navy:#0B1A33;--navy2:#11264a;--gold:#C9A24B;--gold2:#E6C167;--yellow:#FFE27A;--white:#fff;--muted:#BFC9DA;}
+    *{box-sizing:border-box;margin:0;padding:0;font-family:"Segoe UI","Cairo",sans-serif}
+    body{background:linear-gradient(160deg,var(--navy),var(--navy2));min-height:100vh;color:var(--white);padding:40px 16px}
+    .wrap{max-width:640px;margin:0 auto}
+    h1{color:var(--yellow);font-size:24px;margin-bottom:6px}
+    .sub{color:var(--gold2);margin-bottom:24px;font-size:14px}
+    .card{background:rgba(255,255,255,.04);border:1px solid rgba(201,162,75,.3);border-radius:14px;padding:22px;margin-bottom:16px}
+    label{display:block;color:var(--yellow);font-weight:700;margin-bottom:6px;font-size:14px}
+    .hint{color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.7}
+    input,select{width:100%;padding:11px 12px;background:rgba(0,0,0,.25);border:1px solid rgba(201,162,75,.4);border-radius:8px;color:var(--white);font-size:14px;direction:ltr;text-align:left}
+    input:focus{outline:none;border-color:var(--gold)}
+    .field{margin-bottom:16px}
+    .row{display:flex;gap:10px;align-items:center;margin-top:8px}
+    .btn{cursor:pointer;border:0;padding:11px 18px;border-radius:8px;font-weight:700;font-size:14px;font-family:inherit}
+    .btn-gold{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1303}
+    .btn-ghost{background:transparent;border:1px solid var(--gold);color:var(--yellow)}
+    .ok{color:#4ade80;font-size:13px}
+    .err{color:#ff8a8a;font-size:13px}
+    .opt{display:flex;align-items:center;gap:8px;margin:6px 0;color:var(--white);font-size:13px}
+    .opt input{width:auto}
+    code{background:rgba(0,0,0,.3);padding:2px 6px;border-radius:4px;color:var(--gold2)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>إعدادات الربط — منصة العدالة</h1>
+    <p class="sub">اربط الإضافة بحساب مكتبك في منصة العدالة لإرسال بيانات ناجز تلقائياً.</p>
+
+    <div class="card">
+      <div class="field">
+        <label>رابط واجهة المنصة (API URL)</label>
+        <p class="hint">هذا الرابط مضبوط مسبقاً على عنوان منصة العدالة. لا تحتاج لتغييره إلا إذا تغير نطاق المنصة.<br/>
+        <code>https://ren7wrbp.mule.page/api/public/najiz-sync</code></p>
+        <input id="apiUrl" type="url" placeholder="https://ren7wrbp.mule.page/api/public/najiz-sync" />
+      </div>
+
+      <div class="field">
+        <label>رمز المزامنة (Sync Token) — مطلوب</label>
+        <p class="hint">من إعدادات حسابك في منصة العدالة → إعدادات المزامنة، انسخ رمز المزامنة (Sync Token) والصقه هنا. هذا الرمز يربط البيانات بحسابك.</p>
+        <input id="apiKey" type="text" placeholder="الصق رمز المزامنة هنا" />
+      </div>
+
+      <div class="field">
+        <label>مفتاح ناجز (اختياري)</label>
+        <p class="hint">إن وُجد لديك مفتاح API رسمي من ناجز فأضفه هنا. ليس مطلوباً — الإضافة تعمل بدون مفتاح بمجرد تسجيل دخولك لناجز.</p>
+        <input id="najizKey" type="text" placeholder="اختياري — اتركه فارغاً إن لم يتوفر" />
+      </div>
+
+      <div class="field">
+        <label>المزامنة التلقائية</label>
+        <div class="opt"><input type="checkbox" id="autoSync" /> <span>تفعيل المزامنة التلقائية في الخلفية</span></div>
+        <div class="row">
+          <span style="color:var(--muted);font-size:13px">كل</span>
+          <select id="interval" style="width:140px;direction:rtl;text-align:right">
+            <option value="15">15 دقيقة</option>
+            <option value="30">30 دقيقة</option>
+            <option value="60" selected>ساعة</option>
+            <option value="180">3 ساعات</option>
+            <option value="360">6 ساعات</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <button class="btn btn-gold" id="save">حفظ الإعدادات</button>
+        <button class="btn btn-ghost" id="test">اختبار الاتصال</button>
+        <span id="msg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <label>كيف تستخدم الأداة؟</label>
+      <ol style="color:var(--white);padding-inline-start:18px;line-height:2;font-size:14px">
+        <li>افتح <code>https://www.najiz.sa</code> وسجّل دخولك بحسابك الشخصي.</li>
+        <li>ستظهر شارة الأداة في أسفل الصفحة — اضغطها لاختيار البيانات.</li>
+        <li>أو اضغط أيقونة الإضافة في شريط المتصفح واختر ما تريد مزامنته.</li>
+        <li>سيتم إرسال البيانات تلقائياً إلى منصة العدالة وترتيبها في الأقسام المناسبة (القضايا، الموكلون، الجلسات…).</li>
+      </ol>
+    </div>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

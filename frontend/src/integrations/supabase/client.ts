@@ -28,10 +28,13 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
 
 
 function createSupabaseClient() {
-  // Use import.meta.env for client-side (Vite build-time replacement)
-  // Fall back to process.env for SSR (server-side rendering)
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+  // Hardcoded Supabase credentials (anon key is public, safe to embed)
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
+    || process.env.SUPABASE_URL
+    || "https://sofurxihjwgmbosyzeib.supabase.co";
+  const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+    || process.env.SUPABASE_PUBLISHABLE_KEY
+    || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNvZnVyeGloandnbWJvc3l6ZWliIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NzA3MTksImV4cCI6MjA5ODI0NjcxOX0.wihTlsW93kHIMUAjeKR7926Ndg9VW4cyJWNmTuTuoHA";
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
     const missing = [

@@ -1,27 +1,72 @@
 {
   "manifest_version": 3,
   "name": "منصة العدالة لإدارة مكاتب المحاماة",
-  "version": "3.1.0",
-  "description": "أداة هجينة متكاملة (RPA + بوت تلقائي + قراءة شاشة + قراءة نصية احتياطية) لسحب البيانات من ناجز ومزامنتها تلقائياً مع منصة العدالة — تفتح المتصفح، تنتظر تسجيل الدخول عبر نفاذ، ثم تسحب جميع البيانات وترسلها للنظام مع تنظيمها في أقسامها المخصصة",
-  "permissions": ["activeTab", "storage", "scripting", "tabs"],
-  "host_permissions": ["<all_urls>"],
+  "short_name": "منصة العدالة",
+  "version": "3.0.0",
+  "description": "أداة سحب ومزامنة بيانات القضايا والموكلين والجلسات والوكالات وطلبات التنفيذ من منصة ناجز إلى منصة العدالة — مع بوت المزامنة التلقائية.",
+  "default_locale": "ar",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "alarms",
+    "notifications",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://najiz.sa/*",
+    "https://www.najiz.sa/*",
+    "https://*.najiz.sa/*",
+    "https://aladala-platform-rnuz.onrender.com/*",
+    "https://ren7wrbp.mule.page/*",
+    "https://*.mule.page/*"
+  ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "منصة العدالة — مزامنة ناجز",
-    "default_icon": { "48": "icon.png", "128": "icon.png" }
+    "default_title": "منصة العدالة - مزامنة ناجز",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
-  "background": { "service_worker": "background.js" },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_page": "options.html",
   "content_scripts": [
     {
       "matches": [
         "https://najiz.sa/*",
+        "https://www.najiz.sa/*",
         "https://*.najiz.sa/*"
       ],
-      "js": ["content.js"],
-      "css": ["content.css"],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     }
   ],
-  "icons": { "48": "icon.png", "128": "icon.png" }
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/*.png",
+        "injected.js"
+      ],
+      "matches": [
+        "https://*.najiz.sa/*",
+        "https://najiz.sa/*"
+      ]
+    }
+  ]
 }

@@ -1,273 +1,72 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ar" dir="rtl">
-<head>
-<meta charset="UTF-8">
-<title>منصة العدالة — مزامنة ناجز</title>
-<style>
-  :root {
-    --navy-900: #0a1628;
-    --navy-800: #0f1f3a;
-    --navy-700: #15294d;
-    --gold-500: #d4af37;
-    --gold-600: #b8941f;
-    --gold-glow: rgba(212,175,55,0.35);
-    --white: #ffffff;
-    --yellow-300: #fde047;
-    --text-dim: #b8c5d6;
-    --danger: #ef4444;
-    --success: #10b981;
-  }
-  * { box-sizing: border-box; }
-  body {
-    font-family: 'Tajawal', system-ui, -apple-system, sans-serif;
-    width: 380px;
-    margin: 0;
-    padding: 0;
-    background: linear-gradient(160deg, var(--navy-900), var(--navy-800));
-    color: var(--white);
-    min-height: 540px;
-  }
-  .header {
-    position: relative;
-    padding: 18px 18px 14px;
-    background: linear-gradient(135deg, var(--navy-800), var(--navy-700));
-    border-bottom: 2px solid var(--gold-500);
-    box-shadow: 0 6px 24px -8px var(--gold-glow);
-  }
-  .brand {
-    display: flex; align-items: center; gap: 10px;
-  }
-  .brand-logo {
-    width: 38px; height: 38px;
-    border-radius: 10px;
-    background: linear-gradient(135deg, var(--gold-500), var(--gold-600));
-    display: grid; place-items: center;
-    color: var(--navy-900); font-weight: 900; font-size: 18px;
-    box-shadow: 0 4px 12px var(--gold-glow);
-  }
-  .brand-text h1 {
-    margin: 0; font-size: 15px; color: var(--yellow-300);
-    letter-spacing: 0.2px;
-  }
-  .brand-text p {
-    margin: 2px 0 0; font-size: 10.5px; color: var(--text-dim);
-  }
-  .gear {
-    position: absolute; top: 16px; left: 16px;
-    width: 32px; height: 32px; border-radius: 8px;
-    background: rgba(212,175,55,0.12);
-    border: 1px solid rgba(212,175,55,0.3);
-    color: var(--gold-500);
-    display: grid; place-items: center; cursor: pointer;
-    transition: all .2s;
-  }
-  .gear:hover { background: rgba(212,175,55,0.25); transform: rotate(45deg); }
-  .gear svg { width: 18px; height: 18px; }
-
-  .content { padding: 16px; }
-
-  .panel {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(212,175,55,0.15);
-    border-radius: 12px;
-    padding: 14px;
-    margin-bottom: 12px;
-  }
-
-  .settings { display: none; }
-  .settings.open { display: block; }
-
-  label {
-    display: block; font-size: 11px; font-weight: 700;
-    color: var(--yellow-300); margin: 8px 0 4px;
-  }
-  input {
-    width: 100%; padding: 9px 11px;
-    border-radius: 8px; font: inherit; font-size: 12.5px;
-    background: var(--navy-900); color: var(--white);
-    border: 1px solid rgba(212,175,55,0.25);
-    outline: none;
-  }
-  input:focus { border-color: var(--gold-500); box-shadow: 0 0 0 2px var(--gold-glow); }
-  .hint { font-size: 10px; color: var(--text-dim); margin-top: 3px; }
-
-  .btn {
-    width: 100%; padding: 11px 14px;
-    border-radius: 10px; font: inherit; font-weight: 800; font-size: 13px;
-    cursor: pointer; border: none;
-    transition: all .15s;
-    display: flex; align-items: center; justify-content: center; gap: 8px;
-  }
-  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .btn-primary {
-    background: linear-gradient(135deg, var(--gold-500), var(--gold-600));
-    color: var(--navy-900);
-    box-shadow: 0 6px 18px -4px var(--gold-glow);
-  }
-  .btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 22px -4px var(--gold-glow); }
-  .btn-ghost {
-    background: rgba(212,175,55,0.08);
-    color: var(--yellow-300);
-    border: 1px solid rgba(212,175,55,0.25);
-  }
-  .btn-ghost:hover:not(:disabled) { background: rgba(212,175,55,0.18); }
-
-  .primary-action {
-    background: linear-gradient(135deg, var(--gold-500), var(--gold-600));
-    color: var(--navy-900);
-    padding: 14px;
-    border-radius: 12px;
-    font-weight: 900; font-size: 14px;
-    text-align: center;
-    cursor: pointer;
-    box-shadow: 0 8px 24px -6px var(--gold-glow);
-    transition: all .15s;
-    border: none; width: 100%;
-    display: flex; align-items: center; justify-content: center; gap: 10px;
-  }
-  .primary-action:hover:not(:disabled) { transform: translateY(-2px); }
-  .primary-action:disabled { opacity: 0.6; cursor: wait; }
-
-  .secondary-title {
-    font-size: 10.5px; color: var(--text-dim);
-    margin: 14px 0 8px; text-align: center;
-    letter-spacing: 0.5px;
-  }
-
-  .grid {
-    display: grid; grid-template-columns: 1fr 1fr;
-    gap: 8px;
-  }
-  .chip {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(212,175,55,0.18);
-    color: var(--yellow-300);
-    padding: 9px 8px;
-    border-radius: 9px;
-    font-size: 11.5px; font-weight: 700;
-    cursor: pointer;
-    text-align: center;
-    transition: all .15s;
-    display: flex; align-items: center; justify-content: center; gap: 5px;
-  }
-  .chip:hover:not(:disabled) {
-    background: rgba(212,175,55,0.15);
-    border-color: var(--gold-500);
-    color: var(--white);
-  }
-  .chip:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .status {
-    margin-top: 12px; padding: 10px 12px;
-    border-radius: 10px; font-size: 11.5px;
-    min-height: 18px; line-height: 1.5;
-    display: none;
-  }
-  .status.show { display: block; }
-  .status.ok { background: rgba(16,185,129,0.12); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.3); }
-  .status.err { background: rgba(239,68,68,0.12); color: #fca5a5; border: 1px solid rgba(239,68,68,0.3); }
-  .status.info { background: rgba(212,175,55,0.1); color: var(--yellow-300); border: 1px solid rgba(212,175,55,0.25); }
-
-  .footer {
-    padding: 10px 16px 14px;
-    text-align: center;
-    font-size: 10px; color: var(--text-dim);
-    border-top: 1px solid rgba(212,175,55,0.1);
-  }
-  .last-sync { color: var(--gold-500); font-weight: 700; }
-
-  .spinner {
-    width: 14px; height: 14px;
-    border: 2px solid currentColor; border-top-color: transparent;
-    border-radius: 50%;
-    animation: spin .7s linear infinite;
-    display: inline-block;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-</style>
-</head>
-<body>
-  <div class="header">
-    <button class="gear" id="gearBtn" title="الإعدادات" aria-label="الإعدادات">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-      </svg>
-    </button>
-    <div class="brand">
-      <div class="brand-logo">ع</div>
-      <div class="brand-text">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>منصة العدالة</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="hdr">
+      <img src="icons/icon48.png" alt="" class="logo" />
+      <div>
         <h1>منصة العدالة</h1>
-        <p>مزامنة بيانات ناجز مع نظامك</p>
+        <p class="sub">المزامنة المباشرة مع ناجز</p>
       </div>
-    </div>
-  </div>
+    </header>
 
-  <div class="content">
-    <!-- Settings panel (hidden by default) -->
-    <div class="panel settings" id="settingsPanel">
-      <label>رابط المنصة (Base URL)</label>
-      <input id="baseUrl" type="url" placeholder="https://your-platform.lovable.app" />
-      <div class="hint">رابط منصتك التي ستستقبل البيانات</div>
+    <section id="statusCard" class="card status">
+      <div class="row">
+        <span class="dot" id="connDot"></span>
+        <span id="connText">جارٍ التحقق من الاتصال…</span>
+      </div>
+      <div class="row small">
+        <span>آخر مزامنة:</span>
+        <strong id="lastSync">—</strong>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button id="testConn" class="btn btn-sm" style="width:100%;font-size:12px;padding:6px;">
+          🔍 اختبار الاتصال
+        </button>
+      </div>
+    </section>
 
-      <label>رمز المزامنة (Sync Token)</label>
-      <input id="syncToken" type="password" placeholder="adala_..." autocomplete="off" />
-      <div class="hint">يُنشأ من قسم "تكامل ناجز" داخل منصتك</div>
+    <section class="card">
+      <h2 class="title">اختر طريقة المزامنة</h2>
 
-      <button class="btn btn-ghost" id="saveBtn" style="margin-top:12px">حفظ الإعدادات</button>
-    </div>
+      <button class="btn btn-gold full" id="syncBot" style="background:linear-gradient(135deg,#059669,#047857);margin-bottom:10px;">
+        🤖 مزامنة تلقائية بالبوت (جميع الصفحات)
+      </button>
 
-    <!-- Primary: Open Najiz + Wait for Login + Start Bot (full RPA flow) -->
-    <button class="primary-action" id="openNajizBtn" style="background:linear-gradient(135deg,#16a34a,#065f46);color:#fff;border:1.5px solid #10b981;margin-bottom:4px">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>
-      </svg>
-      🚀 فتح ناجز وتشغيل البوت التلقائي
-    </button>
-    <div class="hint" style="text-align:center;margin:0 0 10px;color:#6ee7b7">يفتح متصفح كروم → ناجز → ينتظر تسجيل دخولك عبر نفاذ → يسحب جميع البيانات تلقائياً</div>
+      <button class="btn btn-gold full" id="syncAll" style="margin-bottom:12px;">
+        ⇅ مزامنة الصفحة الحالية فقط
+      </button>
 
-    <!-- Cancel bot button (hidden by default, shown when bot is running) -->
-    <button class="btn" id="cancelBotBtn" style="display:none;background:rgba(239,68,68,0.15);color:#fca5a5;border:1px solid rgba(239,68,68,0.4);margin-bottom:8px">
-      ✋ إيقاف البوت
-    </button>
+      <h3 style="font-size:12px;color:#666;margin:8px 0 6px;">أو اختر نوع البيانات يدوياً:</h3>
+      <div class="grid">
+        <button class="btn btn-ghost" data-type="cases">القضايا</button>
+        <button class="btn btn-ghost" data-type="clients">الموكلون والأطراف</button>
+        <button class="btn btn-ghost" data-type="sessions">مواعيد الجلسات</button>
+        <button class="btn btn-ghost" data-type="executions">طلبات التنفيذ</button>
+        <button class="btn btn-ghost" data-type="requests">الطلبات على القضايا</button>
+        <button class="btn btn-ghost" data-type="minutes">محاضر ضبط الجلسات</button>
+        <button class="btn btn-ghost" data-type="agencies">الوكالات</button>
+        <button class="btn btn-ghost" data-type="judgments">الأحكام والاستئناف</button>
+        <button class="btn btn-ghost" data-type="notices">الإشعارات والتنبيهات</button>
+        <button class="btn btn-ghost" data-type="documents">المستندات والمرفقات</button>
+      </div>
+    </section>
 
-    <!-- Autopilot bot (RPA mode) — for when Najiz is already open -->
-    <button class="primary-action" id="autopilotBtn" style="background:linear-gradient(135deg,#1e3a8a,#0a1628);color:var(--gold-500);border:1.5px solid var(--gold-500)">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/>
-      </svg>
-      🤖 تشغيل البوت (الصفحة مفتوحة بالفعل)
-    </button>
-    <div class="hint" style="text-align:center;margin:4px 0 10px">استخدم هذا الزر إذا كانت ناجز مفتوحة ومسجّل دخولك بالفعل</div>
+    <section class="card log">
+      <h2 class="title">سجل المزامنة</h2>
+      <ul id="logList"><li class="muted">لا توجد عمليات بعد.</li></ul>
+    </section>
 
-    <!-- Manual sync action -->
-    <button class="primary-action" id="syncAllBtn">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="23 4 23 10 17 10"/>
-        <polyline points="1 20 1 14 7 14"/>
-        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-      </svg>
-      مزامنة الصفحة الحالية
-    </button>
+    <footer class="ftr">
+      <button id="openOptions" class="link">⚙ الإعدادات وربط المنصة</button>
+      <span class="ver">v3.0.0</span>
+    </footer>
 
-    <div class="secondary-title">— أو سحب يدوي للصفحة الحالية —</div>
-
-    <div class="grid">
-      <button class="chip" data-kind="cases">القضايا</button>
-      <button class="chip" data-kind="sessions">مواعيد الجلسات</button>
-      <button class="chip" data-kind="powers">الوكالات القضائية</button>
-      <button class="chip" data-kind="executions">طلبات التنفيذ</button>
-      <button class="chip" data-kind="clients">العملاء والخصوم</button>
-      <button class="chip" data-kind="judgments">الأحكام والمحاضر</button>
-    </div>
-
-    <div class="status" id="status"></div>
-  </div>
-
-  <div class="footer">
-    <span id="lastSync">لم تتم المزامنة بعد</span>
-  </div>
-
-<script src="popup.js"></script>
-</body>
+    <script src="popup.js"></script>
+  </body>
 </html>

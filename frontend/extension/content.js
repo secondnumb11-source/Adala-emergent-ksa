@@ -1,665 +1,1326 @@
-// منصة العدالة — Najiz content script v3.1
-// Hybrid scraper: screen reading + DOM tables/grids + cards + text-mode fallback
-// + RPA auto-scroll + lazy-load trigger + iframe recursion + stable record IDs
+// content.js — واجهة الموافقة والسحب من ناجز.
+// يعتمد على مصدرين حقيقيين: البيانات الظاهرة في الصفحة + استجابات الشبكة التي تحملها ناجز داخل المتصفح.
 (function () {
-  if (window.__ADALA_NAJIZ_LOADED__) return;
-  window.__ADALA_NAJIZ_LOADED__ = true;
+  if (window.__adalaNajizContentInjected) return;
+  window.__adalaNajizContentInjected = true;
 
-  const text = (el) => (el?.textContent || "").trim().replace(/\s+/g, " ");
-  const $all = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const CAPTURE_KEY = "adalaNajizNetworkCaptures";
+  const MAX_CAPTURED_RESPONSES = 80;
+  const MAX_RAW_TEXT = 1600;
+  const TYPES = [
+    ["all", "مزامنة جميع البيانات"],
+    ["cases", "القضايا"],
+    ["clients", "الموكلون والأطراف"],
+    ["sessions", "مواعيد الجلسات"],
+    ["executions", "طلبات التنفيذ"],
+    ["requests", "الطلبات على القضايا"],
+    ["minutes", "محاضر ضبط الجلسات"],
+    ["agencies", "الوكالات"],
+    ["judgments", "الأحكام والاستئناف"],
+    ["notices", "الإشعارات"],
+    ["documents", "المستندات والمرفقات"],
+  ];
 
-  // Stable hash for fallback IDs — same content → same id (no Date.now() drift,
-  // so re-syncs no longer duplicate rows in the system).
-  function hashStr(s) {
-    let h = 0;
-    for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-    return ("00000000" + (h >>> 0).toString(16)).slice(-8);
-  }
-  const stableId = (prefix, ...parts) =>
-    `${prefix}_${hashStr(parts.filter(Boolean).join("|").slice(0, 600))}`;
+  const captured = [];
 
-  // ---------- Enhanced auto-scroll: triggers lazy-load + full coverage ----------
-  async function autoScrollFull() {
-    try {
-      const vh = window.innerHeight;
-      const step = Math.max(300, Math.floor(vh * 0.75));
-      const DELAY = 350;
-
-      window.scrollTo({ top: 0, behavior: "instant" });
-      await sleep(300);
-
-      let lastHeight = -1;
-      let stableCount = 0;
-      const maxIterations = 100;
-      for (let i = 0; i < maxIterations; i++) {
-        const targetY = (i + 1) * step;
-        window.scrollTo({ top: targetY, behavior: "instant" });
-        // also scroll the innermost scroll containers (Angular CDK virtual scroll)
-        $all(".cdk-virtual-scroll-viewport, [class*='overflow-auto'], [class*='overflow-y-auto']")
-          .forEach((sc) => { try { sc.scrollTop = sc.scrollHeight; } catch {} });
-        await sleep(DELAY);
-
-        const curHeight = document.documentElement.scrollHeight;
-        if (curHeight > lastHeight + 50) {
-          stableCount = 0;
-          lastHeight = curHeight;
-        } else {
-          stableCount++;
-          if (stableCount >= 4) break;
-        }
-        if (targetY > curHeight + vh) break;
-      }
-
-      await sleep(600);
-      const finalHeight = document.documentElement.scrollHeight;
-      for (let y = finalHeight; y > 0; y -= step * 2) {
-        window.scrollTo({ top: y, behavior: "instant" });
-        await sleep(80);
-      }
-      window.scrollTo({ top: 0, behavior: "instant" });
-      await sleep(400);
-      await tryLoadMore();
-    } catch (e) { console.warn("[adala] scroll failed", e); }
+  // ===== كشف الصفحة الحالية لتوجيه السحب =====
+  function detectCurrentPage() {
+    const url = location.href.toLowerCase();
+    if (/\/lawsuit/.test(url)) return "cases";
+    if (/\/appointment-requests/.test(url)) return "sessions";
+    if (/\/wekalat|procurations-query/.test(url)) return "agencies";
+    if (/\/iexecution/.test(url)) return "executions";
+    if (/\/dashboard/.test(url)) return "sessions"; // لوحة المعلومات تحتوي التقويم العدلي
+    return "all";
   }
 
-  async function tryLoadMore() {
-    const moreBtns = $all("button, a, [role='button']");
-    for (const btn of moreBtns) {
-      const t = text(btn);
-      if (!t || t.length > 40) continue;
-      if (/تحميل المزيد|عرض المزيد|المزيد|show more|load more|التالي|next/i.test(t)) {
-        try {
-          btn.click();
-          await sleep(1500);
-          await autoScrollQuick();
-        } catch {}
-        break;
-      }
-    }
-  }
+  // سحب تلقائي بناءً على الصفحة الحالية
+  const currentPageType = detectCurrentPage();
 
-  async function autoScrollQuick() {
-    try {
-      const step = Math.max(300, Math.floor(window.innerHeight * 0.7));
-      for (let i = 0; i < 30; i++) {
-        window.scrollTo({ top: (i + 1) * step, behavior: "instant" });
-        await sleep(200);
-        if ((i + 1) * step > document.documentElement.scrollHeight + window.innerHeight) break;
-      }
-      window.scrollTo({ top: 0, behavior: "instant" });
-      await sleep(300);
-    } catch {}
-  }
+  injectNetworkBridge();
+  createFloatingPanel();
 
-  // ---------- Click internal sub-tabs on cases page (القضايا/الأحكام/القرارات) ----------
-  async function clickSubTab(labelKeywords) {
-    const candidates = $all("button, a, [role='tab'], .tab, .nav-link, li, [class*='tab']");
-    for (const el of candidates) {
-      const t = text(el);
-      if (!t || t.length > 30) continue;
-      if (labelKeywords.some((k) => t.includes(k))) {
-        try { el.click(); await sleep(1800); return true; } catch {}
-      }
-    }
-    return false;
-  }
+  window.addEventListener("message", (event) => {
+    if (event.source !== window || event.data?.source !== "ADALA_NAJIZ_BRIDGE") return;
+    rememberNetworkPayload(event.data.payload);
+  });
 
-  // ---------- Scraping helpers ----------
-  function pushGroup(groups, headers, rowEls, cellSel) {
-    const rows = rowEls
-      .map((r) => $all(cellSel, r).map(text))
-      .filter((cells) => cells.some((c) => c && c.length));
-    if (rows.length) groups.push({ headers: headers.filter(Boolean), rows });
-  }
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.action !== "SCRAPE") return false;
+    scrape(msg.type || "all")
+      .then((payload) => sendResponse({ ok: true, payload }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  });
 
-  function collectTableGroups(root = document) {
-    const groups = [];
-
-    // 1) Native HTML tables
-    $all("table", root).forEach((t) => {
-      let headers = $all("thead th, thead td", t).map(text).filter(Boolean);
-      let rowEls = $all("tbody tr", t);
-      if (!rowEls.length) {
-        const allTr = $all("tr", t);
-        if (!headers.length && allTr.length) {
-          headers = $all("th, td", allTr[0]).map(text);
-          rowEls = allTr.slice(1);
-        } else rowEls = allTr;
-      }
-      pushGroup(groups, headers, rowEls, "th, td");
-    });
-
-    // 2) ARIA grids / role=table / treegrid
-    $all("[role='table'], [role='grid'], [role='treegrid']", root).forEach((g) => {
-      const headers = $all("[role='columnheader']", g).map(text);
-      const rowEls = $all("[role='row']", g).filter((r) => $all("[role='gridcell'], [role='cell']", r).length);
-      pushGroup(groups, headers, rowEls, "[role='gridcell'], [role='cell']");
-    });
-
-    // 3) Angular Material tables
-    $all("mat-table, .mat-table, .mat-mdc-table", root).forEach((g) => {
-      const headers = $all("mat-header-cell, .mat-header-cell, .mat-mdc-header-cell", g).map(text);
-      pushGroup(groups, headers, $all("mat-row, .mat-row, .mat-mdc-row", g), "mat-cell, .mat-cell, .mat-mdc-cell");
-    });
-
-    // 4) Clarity datagrid
-    $all("clr-datagrid, .datagrid", root).forEach((g) => {
-      const headers = $all("clr-dg-column, .datagrid-column", g).map(text);
-      pushGroup(groups, headers, $all("clr-dg-row, .datagrid-row", g), "clr-dg-cell, .datagrid-cell");
-    });
-
-    // 5) PrimeNG / generic ui datatables
-    $all(".p-datatable, .ui-table, p-table", root).forEach((g) => {
-      const headers = $all("thead th, .p-datatable-thead th", g).map(text);
-      pushGroup(groups, headers, $all("tbody tr, .p-datatable-tbody tr", g), "td");
-    });
-
-    return groups;
-  }
-
-  function mapGroup(group, fieldMap) {
-    const idx = (label) => group.headers.findIndex((h) => h.includes(label));
-    return group.rows.map((tds, i) => {
-      const obj = { _raw: tds, _index: i };
-      for (const [key, labels] of Object.entries(fieldMap)) {
-        for (const lbl of labels) {
-          const j = idx(lbl);
-          const v = j >= 0 ? (tds[j] || "") : "";
-          if (v) { obj[key] = v; break; }
-        }
-      }
-      return obj;
-    });
-  }
-
-  function groupMatches(group, keywords) {
-    if (group.headers.some((h) => keywords.some((kw) => h.includes(kw)))) return true;
-    const sample = (group.rows[0] || []).join(" ");
-    return keywords.some((kw) => sample.includes(kw));
-  }
-
-  function selectGroups(groups, keywords, allowFallback) {
-    const matched = groups.filter((g) => groupMatches(g, keywords));
-    if (matched.length) return matched;
-    if (allowFallback && groups.length) {
-      return [groups.slice().sort((a, b) => b.rows.length - a.rows.length)[0]];
-    }
-    return [];
-  }
-
-  // ---------- Card / label-value fallback ----------
-  function fieldFromContainer(container, labels) {
-    const nodes = $all("*", container);
-    for (const n of nodes) {
-      const t = text(n);
-      if (!t || t.length > 120) continue;
-      for (const lbl of labels) {
-        if (t === lbl || t === lbl + ":" || t.startsWith(lbl + " ") || t.startsWith(lbl + ":") || t.startsWith(lbl + " :")) {
-          const after = t.slice(lbl.length).replace(/^[:\s\-–]+/, "").trim();
-          if (after) return after;
-          const sib = n.nextElementSibling;
-          if (sib) { const sv = text(sib); if (sv) return sv; }
-          const last = n.lastElementChild;
-          if (last) { const lv = text(last); if (lv && lv !== t) return lv; }
-        }
-      }
-    }
-    return "";
-  }
-
-  function collectCards(labelKeywords) {
-    const out = [];
-    const seen = new Set();
-    const sel = "[class*='card'], [class*='Card'], [class*='item'], [class*='Item'], [class*='box'], li, [class*='panel'], [class*='tile'], [class*='row']";
-    for (const el of $all(sel)) {
-      const t = text(el);
-      if (!t || t.length < 8 || t.length > 1200) continue;
-      const hits = labelKeywords.filter((k) => t.includes(k)).length;
-      if (hits < 2) continue;
-      if (Array.from(seen).some((s) => s.contains(el) || el.contains(s))) continue;
-      seen.add(el);
-      out.push(el);
-    }
-    return out;
-  }
-
-  // ---------- Date & amount parsers ----------
-  function parseDate(s) {
-    if (!s) return undefined;
-    let m = s.match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
-    if (m) return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
-    m = s.match(/(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
-    if (m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
-    return undefined;
-  }
-
-  // Parses time like "12:30" / "12:30 ص" / "12:30 م" → "HH:mm" 24h
-  function parseTime(s) {
-    if (!s) return undefined;
-    const m = s.match(/(\d{1,2}):(\d{2})(?:\s*(ص|م|am|pm|AM|PM))?/);
-    if (!m) return undefined;
-    let h = Number(m[1]); const min = Number(m[2]);
-    const tag = (m[3] || "").toLowerCase();
-    if (tag === "م" || tag === "pm") { if (h < 12) h += 12; }
-    else if (tag === "ص" || tag === "am") { if (h === 12) h = 0; }
-    return `${String(h).padStart(2,"0")}:${String(min).padStart(2,"0")}`;
-  }
-
-  // Builds a full ISO timestamp from a row's text (date + optional time).
-  function parseDateTime(parts) {
-    const blob = (Array.isArray(parts) ? parts.join(" ") : String(parts || "")).trim();
-    const d = parseDate(blob);
-    if (!d) return undefined;
-    const t = parseTime(blob);
-    return t ? `${d}T${t}:00` : `${d}T09:00:00`;
-  }
-
-  function parseAmount(s) {
-    if (!s) return undefined;
-    const n = Number(String(s).replace(/[^\d.]/g, ""));
-    return isFinite(n) ? n : undefined;
-  }
-
-  // ---------- Per-section keyword dictionaries ----------
-  const CASE_KW = ["القضية", "رقم القضية", "الموضوع", "الدعوى", "رقم الدعوى"];
-  const POWER_KW = ["الوكالة", "رقم الوكالة", "الموكل", "الوكيل", "وكالة"];
-  const EXEC_KW = ["التنفيذ", "رقم الطلب", "المبلغ", "المنفذ", "المدين"];
-  const SESSION_KW = ["الجلسة", "تاريخ الجلسة", "الموعد", "التقويم", "موعد"];
-  const DOC_KW = ["الحكم", "القرار", "الطلب", "المستند", "نوع الطلب", "نوع الحكم"];
-
-  function scrapeCases(groups, focus) {
-    const out = [];
-    for (const g of selectGroups(groups, CASE_KW, focus)) {
-      mapGroup(g, {
-        case_number: ["رقم القضية", "رقم الدعوى", "رقم"],
-        title: ["الموضوع", "موضوع", "القضية"],
-        court: ["المحكمة"], case_type: ["النوع", "نوع القضية"],
-        status: ["الحالة"], client_name: ["الموكل", "العميل"],
-      }).forEach((r, i) => {
-        const cn = (r.case_number || r._raw[0] || "").trim();
-        const id = cn ? `case_${cn}` : stableId("case", ...r._raw);
-        out.push({
-          najiz_id: id,
-          case_number: cn || `بدون رقم ${i + 1}`,
-          title: r.title || "", court: r.court || "", case_type: r.case_type || "",
-          status: r.status || "", client_name: r.client_name || "",
-        });
-      });
-    }
-    if (!out.length) {
-      collectCards(CASE_KW).forEach((el, i) => {
-        const cn = fieldFromContainer(el, ["رقم القضية", "رقم الدعوى", "رقم"]);
-        const id = cn ? `case_${cn}` : stableId("case", text(el));
-        out.push({
-          najiz_id: id,
-          case_number: cn || `بدون رقم ${i + 1}`,
-          title: fieldFromContainer(el, ["الموضوع", "موضوع"]) || "",
-          court: fieldFromContainer(el, ["المحكمة"]) || "",
-          case_type: fieldFromContainer(el, ["النوع", "نوع القضية"]) || "",
-          status: fieldFromContainer(el, ["الحالة"]) || "",
-          client_name: fieldFromContainer(el, ["الموكل", "العميل"]) || "",
-        });
-      });
-    }
-    return out;
-  }
-
-  function scrapePowers(groups, focus) {
-    const out = [];
-    for (const g of selectGroups(groups, POWER_KW, focus)) {
-      mapGroup(g, {
-        wakalah_number: ["رقم الوكالة", "رقم"],
-        issuer_name: ["الموكل", "المُوكِّل"], agent_name: ["الوكيل"],
-        issue_date: ["تاريخ الإصدار", "تاريخ الاصدار"],
-        expiry_date: ["تاريخ الانتهاء", "الانتهاء"],
-        scope: ["النطاق", "نطاق", "الموضوع"],
-      }).forEach((r, i) => {
-        const wn = (r.wakalah_number || r._raw[0] || "").trim();
-        const id = wn ? `pow_${wn}` : stableId("pow", ...r._raw);
-        out.push({
-          najiz_id: id,
-          wakalah_number: wn || `بدون رقم ${i + 1}`,
-          issuer_name: r.issuer_name || "", agent_name: r.agent_name || "",
-          issue_date: parseDate(r.issue_date), expiry_date: parseDate(r.expiry_date),
-          scope: r.scope || "",
-        });
-      });
-    }
-    if (!out.length) {
-      collectCards(POWER_KW).forEach((el, i) => {
-        const wn = fieldFromContainer(el, ["رقم الوكالة", "رقم"]);
-        const id = wn ? `pow_${wn}` : stableId("pow", text(el));
-        out.push({
-          najiz_id: id,
-          wakalah_number: wn || `بدون رقم ${i + 1}`,
-          issuer_name: fieldFromContainer(el, ["الموكل"]) || "",
-          agent_name: fieldFromContainer(el, ["الوكيل"]) || "",
-          issue_date: parseDate(fieldFromContainer(el, ["تاريخ الإصدار", "تاريخ الاصدار"])),
-          expiry_date: parseDate(fieldFromContainer(el, ["تاريخ الانتهاء", "الانتهاء"])),
-          scope: fieldFromContainer(el, ["النطاق", "نطاق"]) || "",
-        });
-      });
-    }
-    return out;
-  }
-
-  function scrapeExecutions(groups, focus) {
-    const out = [];
-    for (const g of selectGroups(groups, EXEC_KW, focus)) {
-      mapGroup(g, {
-        execution_number: ["رقم الطلب", "رقم التنفيذ"],
-        court: ["المحكمة"], amount: ["المبلغ"],
-        debtor_name: ["المنفذ ضده", "المدين"], status: ["الحالة"],
-        filed_date: ["تاريخ الإيداع", "تاريخ الايداع", "التاريخ"],
-      }).forEach((r, i) => {
-        const en = (r.execution_number || r._raw[0] || "").trim();
-        const id = en ? `exe_${en}` : stableId("exe", ...r._raw);
-        out.push({
-          najiz_id: id,
-          execution_number: en || `بدون رقم ${i + 1}`,
-          court: r.court || "", amount: parseAmount(r.amount),
-          debtor_name: r.debtor_name || "", status: r.status || "",
-          filed_date: parseDate(r.filed_date),
-        });
-      });
-    }
-    if (!out.length) {
-      collectCards(EXEC_KW).forEach((el, i) => {
-        const en = fieldFromContainer(el, ["رقم الطلب", "رقم التنفيذ", "رقم"]);
-        const id = en ? `exe_${en}` : stableId("exe", text(el));
-        out.push({
-          najiz_id: id,
-          execution_number: en || `بدون رقم ${i + 1}`,
-          court: fieldFromContainer(el, ["المحكمة"]) || "",
-          amount: parseAmount(fieldFromContainer(el, ["المبلغ"])),
-          debtor_name: fieldFromContainer(el, ["المنفذ ضده", "المدين"]) || "",
-          status: fieldFromContainer(el, ["الحالة"]) || "",
-          filed_date: parseDate(fieldFromContainer(el, ["تاريخ الإيداع", "التاريخ"])),
-        });
-      });
-    }
-    return out;
-  }
-
-  function scrapeSessions(groups, focus) {
-    const out = [];
-    for (const g of selectGroups(groups, SESSION_KW, focus)) {
-      mapGroup(g, {
-        case_id: ["رقم القضية", "القضية", "رقم الدعوى"],
-        date: ["تاريخ", "الموعد"],
-        time: ["الوقت", "الساعة"],
-        court: ["المحكمة"], room: ["القاعة", "الدائرة"], status: ["الحالة"],
-      }).forEach((r, i) => {
-        const dt = parseDateTime([r.date, r.time, ...r._raw]);
-        if (!dt) return;
-        const caseId = (r.case_id || "").trim();
-        const najiz_case_id = caseId ? `case_${caseId}` : stableId("sess", ...r._raw, dt);
-        out.push({
-          najiz_case_id,
-          session_date: dt,
-          court: r.court || "", room: r.room || "", status: r.status || "",
-        });
-      });
-    }
-    // Harvest calendar / appointment widgets on dashboard (التقويم العدلي)
-    $all("[class*='calendar'] [data-date], [class*='event'], li.session, .appointment-item, [class*='appointment'], [class*='session-item']")
-      .forEach((el) => {
-        const blob = text(el);
-        const d = parseDate(blob) || parseDate(el.getAttribute("data-date") || "");
-        if (!d) return;
-        const t = parseTime(blob);
-        const dt = t ? `${d}T${t}:00` : `${d}T09:00:00`;
-        const najiz_case_id = stableId("cal", blob, dt);
-        out.push({ najiz_case_id, session_date: dt, court: "", room: "", status: "" });
-      });
-    // Deduplicate by (najiz_case_id|session_date)
-    const seen = new Set();
-    return out.filter((s) => {
-      const k = `${s.najiz_case_id}|${s.session_date}`;
-      if (seen.has(k)) return false; seen.add(k); return true;
-    });
-  }
-
-  function scrapeDocuments(groups, focus) {
-    const out = [];
-    for (const g of selectGroups(groups, DOC_KW, focus)) {
-      mapGroup(g, {
-        case_number: ["رقم القضية", "القضية", "رقم الدعوى"],
-        title: ["الموضوع", "العنوان", "نوع الطلب", "نوع الحكم", "نوع القرار", "الطلب"],
-        court: ["المحكمة"], status: ["الحالة"],
-        filed_date: ["تاريخ", "تاريخ الإيداع", "تاريخ الحكم", "تاريخ القرار"],
-      }).forEach((r, i) => {
-        const title = (r.title || r._raw.slice(0, 2).join(" — ") || `مستند ${i + 1}`).trim().slice(0, 200);
-        const cn = (r.case_number || "").trim();
-        out.push({
-          najiz_id: stableId("doc", cn, title, r.filed_date || ""),
-          title,
-          case_number: cn ? `case_${cn}` : "",
-          court: r.court || "", status: r.status || "",
-          filed_date: parseDate(r.filed_date), source_url: location.href,
-        });
-      });
-    }
-    return out;
-  }
-
-  function detectKindFromUrl() {
-    const u = (location.pathname + location.search + location.hash).toLowerCase();
-    if (u.includes("/wekalat/procurations-query")) return "powers";
-    if (u.includes("/iexecution")) return "executions";
-    if (u.includes("/appointment-requests")) return "sessions";
-    if (u.includes("/dashboard")) return "sessions";
-    if (u.includes("/lawsuit") && u.includes("/requests")) return "documents";
-    if (u.includes("/lawsuit")) return "cases";
-    return null;
-  }
-
-  // ---------- Last-resort text-mode parser ----------
-  // Some Najiz pages render via virtual scroll with no real <table> structure.
-  // We walk visible text blocks and synthesize records using Arabic label patterns.
-  function scrapeFromText() {
-    const result = { cases: [], powers: [], executions: [], sessions: [], documents: [] };
-    const blocks = $all("[class*='card'], [class*='item'], [class*='row'], [class*='record'], section, article")
-      .map((el) => ({ el, t: text(el) }))
-      .filter((b) => b.t.length > 40 && b.t.length < 1200);
-    const seen = new Set();
-    const grab = (t, lbl) => {
-      const re = new RegExp(`${lbl}\\s*[:：]?\\s*([^\\n،,]{2,80})`);
-      const m = t.match(re);
-      return m ? m[1].trim() : "";
+  async function rememberNetworkPayload(payload) {
+    if (!payload?.url || payload.status >= 400) return;
+    if (!isNajizBusinessUrl(payload.url) && !containsNajizBusinessWords(payload.body)) return;
+    const entry = {
+      url: payload.url,
+      method: payload.method || "GET",
+      status: payload.status,
+      ts: payload.ts || Date.now(),
+      body: trimPayload(payload.body),
     };
-    for (const b of blocks) {
-      if (seen.has(b.el)) continue;
-      let nested = false;
-      for (const x of blocks) {
-        if (x.el !== b.el && b.el.contains(x.el) && x.t.length >= b.t.length * 0.6) { nested = true; break; }
+    captured.unshift(entry);
+    if (captured.length > MAX_CAPTURED_RESPONSES) captured.length = MAX_CAPTURED_RESPONSES;
+    try {
+      const stored = await chrome.storage.local.get(CAPTURE_KEY);
+      const merged = [entry, ...(stored[CAPTURE_KEY] || [])].slice(0, MAX_CAPTURED_RESPONSES);
+      await chrome.storage.local.set({ [CAPTURE_KEY]: dedupeBy(merged, (x) => `${x.url}|${JSON.stringify(x.body).slice(0, 240)}`) });
+    } catch {
+      // تجاهل أخطاء التخزين حتى لا تتأثر صفحة ناجز.
+    }
+  }
+
+  function injectNetworkBridge() {
+    const script = document.createElement("script");
+    script.src = chrome.runtime.getURL("injected.js");
+    script.async = false;
+    script.onload = () => script.remove();
+    (document.head || document.documentElement).appendChild(script);
+  }
+
+  function createFloatingPanel() {
+    const fab = document.createElement("button");
+    fab.id = "adala-fab";
+    fab.type = "button";
+    fab.textContent = "⚖ منصة العدالة — مزامنة";
+    document.documentElement.appendChild(fab);
+
+    let panel;
+    fab.addEventListener("click", () => {
+      if (panel) {
+        panel.remove();
+        panel = null;
+        return;
       }
-      if (nested) continue;
-      seen.add(b.el);
-      const t = b.t;
-      if (/رقم القضية|رقم الدعوى/.test(t)) {
-        const cn = grab(t, "رقم القضية|رقم الدعوى");
-        if (cn) result.cases.push({
-          najiz_id: `case_${cn}`, case_number: cn,
-          title: grab(t, "الموضوع") || grab(t, "موضوع"),
-          court: grab(t, "المحكمة"), case_type: grab(t, "النوع"),
-          status: grab(t, "الحالة"), client_name: grab(t, "الموكل|العميل"),
+      panel = document.createElement("div");
+      panel.id = "adala-panel";
+      panel.innerHTML = `
+        <button class="adala-close" type="button" aria-label="إغلاق">×</button>
+        <h3>مزامنة بيانات ناجز إلى منصة العدالة</h3>
+        <p class="adala-consent">بالضغط على المزامنة أنت توافق على إرسال البيانات الظاهرة والمحمّلة في هذه الصفحة إلى نظامك.</p>
+        <button class="adala-all" type="button" data-t="all">⇅ مزامنة كل ما تم العثور عليه</button>
+        <div class="adala-grid">
+          ${TYPES.slice(1).map(([key, label]) => `<button type="button" data-t="${key}">${label}</button>`).join("")}
+        </div>
+        <div class="adala-status" id="adalaStatus">جاهز — افتح صفحة بيانات داخل ناجز بعد تسجيل الدخول</div>
+      `;
+      document.documentElement.appendChild(panel);
+      panel.querySelector(".adala-close").onclick = () => {
+        panel.remove();
+        panel = null;
+      };
+      panel.querySelectorAll("button[data-t]").forEach((button) => {
+        button.addEventListener("click", () => doSync(button.dataset.t));
+      });
+    });
+  }
+
+  async function doSync(type) {
+    const status = document.getElementById("adalaStatus");
+    if (!status) return;
+    status.className = "adala-status";
+    status.textContent = "جارٍ قراءة بيانات الصفحة وإرسالها…";
+    try {
+      const payload = await scrape(type);
+      const result = await chrome.runtime.sendMessage({ action: "PUSH", type, payload, pageUrl: location.href });
+      if (result?.ok) {
+        status.className = "adala-status ok";
+        status.textContent = `✓ وصلت للمنصة: ${payload.summary.totalItems} عنصر (${payload.summary.networkResponses} استجابة شبكة)`;
+      } else {
+        status.className = "adala-status err";
+        status.textContent = `✗ ${result?.error || "فشل الإرسال"}`;
+      }
+    } catch (error) {
+      status.className = "adala-status err";
+      status.textContent = `✗ ${error?.message || String(error)}`;
+    }
+  }
+
+  async function scrape(type) {
+    await waitForPageQuiet();
+    const network = await getStoredCaptures(type);
+    const domItems = collectDomItems();
+    const networkItems = collectNetworkItems(network, type);
+    // ===== الطريقة الثانية المدمجة: كشف البيانات المرئية على الشاشة =====
+    const screenItems = collectScreenItems();
+    const items = dedupeObjects([...domItems, ...networkItems, ...screenItems]);
+    const normalized = normalizeItems(items, type);
+
+    // ===== سحب خاص من لوحة المعلومات (التقويم العدلي / المواعيد المستقبلية) =====
+    if (/\/dashboard/.test(location.href) || type === "sessions" || type === "all") {
+      const dashboardSessions = scrapeDashboardCalendar();
+      if (dashboardSessions.length > 0) {
+        const existing = new Set(normalized.sessions.map((s) => `${s.date}-${s.caseNumber}`));
+        dashboardSessions.forEach((s) => {
+          const key = `${s.date}-${s.caseNumber}`;
+          if (!existing.has(key)) {
+            normalized.sessions.push(s);
+            existing.add(key);
+          }
         });
-      }
-      if (/رقم الوكالة/.test(t)) {
-        const wn = grab(t, "رقم الوكالة");
-        if (wn) result.powers.push({
-          najiz_id: `pow_${wn}`, wakalah_number: wn,
-          issuer_name: grab(t, "الموكل"), agent_name: grab(t, "الوكيل"),
-          issue_date: parseDate(grab(t, "تاريخ الإصدار|تاريخ الاصدار")),
-          expiry_date: parseDate(grab(t, "تاريخ الانتهاء|الانتهاء")),
-          scope: grab(t, "النطاق|الموضوع"),
-        });
-      }
-      if (/رقم الطلب|رقم التنفيذ/.test(t)) {
-        const en = grab(t, "رقم الطلب|رقم التنفيذ");
-        if (en) result.executions.push({
-          najiz_id: `exe_${en}`, execution_number: en,
-          court: grab(t, "المحكمة"), amount: parseAmount(grab(t, "المبلغ")),
-          debtor_name: grab(t, "المنفذ ضده|المدين"),
-          status: grab(t, "الحالة"),
-          filed_date: parseDate(grab(t, "تاريخ الإيداع|التاريخ")),
-        });
-      }
-      if (/الجلسة|تاريخ الجلسة|الموعد/.test(t)) {
-        const dt = parseDateTime(t);
-        if (dt) {
-          const cn = grab(t, "رقم القضية|القضية");
-          result.sessions.push({
-            najiz_case_id: cn ? `case_${cn}` : stableId("sess", t, dt),
-            session_date: dt,
-            court: grab(t, "المحكمة"),
-            room: grab(t, "القاعة|الدائرة"),
-            status: grab(t, "الحالة"),
-          });
-        }
       }
     }
+
+    const summary = makeSummary(normalized, items, network);
+
+    return {
+      type,
+      url: location.href,
+      title: document.title,
+      capturedAt: new Date().toISOString(),
+      source: "najiz-content-v2",
+      summary,
+      normalized,
+      items: filterItemsForType(items, type).slice(0, 500),
+      network: network.map((entry) => ({ url: entry.url, method: entry.method, status: entry.status, ts: entry.ts })).slice(0, 40),
+    };
+  }
+
+  // ===== سحب التقويم العدلي والمواعيد المستقبلية من لوحة المعلومات =====
+  function scrapeDashboardCalendar() {
+    const sessions = [];
+    const seen = new Set();
+
+    // ابحث عن الأقسام التي تحتوي على "التقويم العدلي" أو "المواعيد المستقبلية"
+    const allElements = document.querySelectorAll('div, section, article, [class*="card" i], [class*="calendar" i], [class*="appointment" i], [class*="widget" i]');
+
+    allElements.forEach((container) => {
+      const containerText = clean(container.innerText || container.textContent || "");
+
+      // تحقق من وجود الكلمات المفتاحية
+      const isCalendarSection = /التقويم العدلي|المواعيد المستقبلية|المواعيد القادمة/.test(containerText);
+      if (!isCalendarSection) return;
+      if (containerText.length > 5000) return; // تجنب الحاويات الكبيرة جداً
+
+      // ابحث عن العناصر الفرعية التي تحمل مواعيد
+      const rows = container.querySelectorAll('[class*="item" i], [class*="row" i], [class*="event" i], [class*="appointment" i], li, tr, [role="listitem"]');
+
+      const candidates = rows.length > 0 ? rows : [container];
+
+      candidates.forEach((row) => {
+        const text = clean(row.innerText || row.textContent || "");
+        if (text.length < 8 || text.length > 600) return;
+
+        // استخراج التاريخ (ميلادي أو هجري)
+        const dateMatch = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|\d{1,2}\s+(?:محرم|صفر|ربيع|جمادى|رجب|شعبان|رمضان|شوال|ذو القعدة|ذو الحجة)[^\d]*\d{4}/);
+        if (!dateMatch) return;
+
+        const timeMatch = text.match(/\b\d{1,2}:\d{2}\b/);
+        const caseNumMatch = text.match(/\b\d{4}\s*\/\s*\d{3,}\b|\b\d{9,}\b/);
+
+        const key = `${dateMatch[0]}-${caseNumMatch?.[0] || text.slice(0, 20)}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        sessions.push({
+          date: dateMatch[0],
+          time: timeMatch?.[0] || "",
+          caseNumber: caseNumMatch?.[0]?.replace(/\s/g, "") || "",
+          court: (text.match(/[^\n|،]{0,30}محكمة[^\n|،]{0,40}/) || [""])[0].trim(),
+          hall: (text.match(/(?:قاعة|قاعه)\s*(?:رقم)?\s*([\d\u0660-\u0669]+)/) || [""])[0],
+          circuit: (text.match(/(?:الدائرة|دائرة)\s*([\d\u0660-\u0669]+)/) || [""])[0],
+          sessionType: /استئناف/.test(text) ? "استئناف" : /تنفيذ/.test(text) ? "تنفيذ" : "جلسة",
+          status: "قادمة",
+          title: text.slice(0, 100),
+          source: "najiz_dashboard_calendar",
+          fromDashboard: true,
+          raw: { text: text.slice(0, 400) },
+        });
+      });
+    });
+
+    return sessions;
+  }
+
+  async function getStoredCaptures(type) {
+    const stored = await chrome.storage.local.get(CAPTURE_KEY).catch(() => ({}));
+    const list = dedupeBy([...(captured || []), ...((stored && stored[CAPTURE_KEY]) || [])], (x) => `${x.url}|${JSON.stringify(x.body).slice(0, 240)}`);
+    return list.filter((entry) => type === "all" || isCaptureRelevantToType(entry, type)).slice(0, MAX_CAPTURED_RESPONSES);
+  }
+
+  function collectDomItems() {
+    const items = [];
+    document.querySelectorAll("table").forEach((table, tableIndex) => {
+      const headers = [...table.querySelectorAll("thead th, thead td")].map((cell) => clean(cell.innerText || cell.textContent));
+      const rows = table.querySelectorAll("tbody tr").length ? table.querySelectorAll("tbody tr") : table.querySelectorAll("tr");
+      rows.forEach((row, rowIndex) => {
+        const cells = [...row.querySelectorAll("td, th")].map((cell) => clean(cell.innerText || cell.textContent));
+        if (cells.length < 2 || cells.join(" ").length < 4) return;
+        const fields = {};
+        cells.forEach((value, index) => {
+          fields[headers[index] || `column_${index + 1}`] = value;
+        });
+        items.push({ _source: "dom_table", _kind: inferKindFromText(cells.join(" ")), tableIndex, rowIndex, fields, text: cells.join(" | ") });
+      });
+    });
+
+    const selector = [
+      "[role='row']",
+      "[class*='card' i]",
+      "[class*='item' i]",
+      "[class*='list' i] > *",
+      "[class*='result' i]",
+      "[class*='request' i]",
+    ].join(",");
+    document.querySelectorAll(selector).forEach((element, index) => {
+      if (element.closest("#adala-panel") || element.id === "adala-fab") return;
+      const text = clean(element.innerText || element.textContent);
+      if (text.length < 25 || text.length > MAX_RAW_TEXT) return;
+      items.push({ _source: "dom_block", _kind: inferKindFromText(text), index, text, fields: extractFieldsFromText(text) });
+    });
+
+    return items;
+  }
+
+  // ============================================================
+  // الطريقة الثانية المدمجة: كشف وسحب البيانات المرئية على الشاشة
+  // تعمل بالتوازي مع طريقة DOM/Network الحالية دون تغييرها
+  // ============================================================
+  function containsBusinessWords(text) {
+    return /(قضية|قضايا|دعوى|دعاوى|جلسة|جلسات|موعد|مواعيد|وكالة|وكالات|وكيل|موكل|تنفيذ|محكمة|دائرة|مدعي|مدعى|خصم|حكم|أحكام|استئناف|مذكرة|محضر|ضبط|طلب|طلبات|إشعار|اشعار|مستند|مرفق|التقويم العدلي|رقم القضية|رقم الدعوى)/.test(String(text || ""));
+  }
+
+  // ============================================================
+  // سحب متخصص لجدول القضايا في صفحة lawsuit (حسب الصورة المرفقة)
+  // الأعمدة: رقم القضية | تاريخ القضية | نوع القضية | الصفة | المدعي | المدعى عليه | الحالة
+  // يكشف رؤوس الأعمدة على الشاشة ويربط كل خلية بعمودها الصحيح
+  // ============================================================
+  function scrapeLawsuitCaseTable() {
+    const results = [];
+
+    // خريطة رؤوس الأعمدة المتوقعة → المفتاح الداخلي
+    const HEADER_MAP = [
+      { key: "caseNumber",  re: /رقم\s*القضية|رقم\s*الدعوى/ },
+      { key: "caseDate",    re: /تاريخ\s*القضية|تاريخ\s*الدعوى|تاريخ\s*القيد/ },
+      { key: "caseType",    re: /نوع\s*القضية|نوع\s*الدعوى/ },
+      { key: "capacity",    re: /^الصفة$|الصفة/ },
+      { key: "plaintiff",   re: /المدعي|اسم\s*المدعي|صاحب\s*الطلب/ },
+      { key: "defendant",   re: /المدعى\s*عليه|الخصم/ },
+      { key: "status",      re: /^الحالة$|حالة\s*القضية|الحالة/ },
+    ];
+
+    function matchHeaderKey(headerText) {
+      const t = clean(headerText);
+      for (const h of HEADER_MAP) {
+        if (h.re.test(t)) return h.key;
+      }
+      return null;
+    }
+
+    // ===== المصدر 1: جداول HTML حقيقية =====
+    document.querySelectorAll("table").forEach((table) => {
+      const headerCells = [
+        ...table.querySelectorAll("thead th, thead td"),
+        ...(table.querySelector("thead") ? [] : Array.from(table.querySelectorAll("tr:first-child th, tr:first-child td"))),
+      ];
+      const headerTexts = headerCells.map((c) => clean(c.innerText || c.textContent));
+      // تحقق أن هذا جدول قضايا (يحتوي رقم القضية + المدعي أو نوع القضية)
+      const hasCaseHeaders = headerTexts.some((h) => /رقم\s*القضية|رقم\s*الدعوى/.test(h)) &&
+        headerTexts.some((h) => /المدعي|نوع\s*القضية|الحالة/.test(h));
+      if (!hasCaseHeaders) return;
+
+      // اربط كل index عمود بمفتاحه
+      const colKeys = headerTexts.map((h) => matchHeaderKey(h));
+
+      const bodyRows = table.querySelectorAll("tbody tr").length
+        ? table.querySelectorAll("tbody tr")
+        : table.querySelectorAll("tr");
+      bodyRows.forEach((row, rowIndex) => {
+        if (rowIndex === 0 && row.querySelectorAll("th").length && !row.querySelectorAll("td").length) return;
+        const cells = [...row.querySelectorAll("td, th")].map((c) => clean(c.innerText || c.textContent));
+        if (cells.length < 3) return;
+
+        const fields = {};
+        cells.forEach((val, i) => {
+          const key = colKeys[i];
+          if (key && val) fields[key] = val;
+        });
+        if (!fields.caseNumber) {
+          // محاولة استخراج رقم القضية من أي خلية
+          const found = cells.find((v) => /\d{4}\s*\/\s*\d{3,}|\d{9,}/.test(v));
+          if (found) fields.caseNumber = (found.match(/\d{4}\s*\/\s*\d{3,}|\d{9,}/) || [""])[0].replace(/\s/g, "");
+        }
+        if (!fields.caseNumber) return;
+
+        results.push({
+          _source: "screen_lawsuit_table",
+          _kind: "case",
+          rowIndex,
+          fields,
+          text: cells.join(" | "),
+        });
+      });
+    });
+
+    // ===== المصدر 2: كشف الشاشة عندما لا يكون جدول HTML حقيقي (شبكة CSS/divs) =====
+    if (results.length === 0) {
+      // ابحث عن صف الرؤوس المرئي على الشاشة
+      const allLeaf = [];
+      document.querySelectorAll("div, span, th, td, p").forEach((el) => {
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") return;
+        if (!el.getBoundingClientRect) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 2 || rect.height < 2) return;
+        const directText = clean(
+          Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.nodeValue).join(" ")
+        );
+        if (!directText || directText.length > 40) return;
+        allLeaf.push({ text: directText, top: Math.round(rect.top + window.scrollY), left: Math.round(rect.left), rect });
+      });
+
+      // حدد رؤوس الأعمدة (العناصر التي تطابق HEADER_MAP)
+      const headers = allLeaf
+        .map((l) => ({ ...l, key: matchHeaderKey(l.text) }))
+        .filter((l) => l.key);
+
+      if (headers.length >= 3) {
+        // صف الرؤوس = أكثر صف يحتوي رؤوساً (نفس المستوى العمودي تقريباً)
+        const headerTop = headers[0].top;
+        const rowHeaders = headers.filter((h) => Math.abs(h.top - headerTop) < 30);
+        // رتب الرؤوس حسب الموضع الأفقي (RTL: الأكبر left = الأول)
+        rowHeaders.sort((a, b) => b.left - a.left);
+
+        // اجمع الصفوف تحت الرؤوس
+        const dataLeaves = allLeaf.filter((l) => l.top > headerTop + 20);
+        // جمّع حسب الصف (نفس top تقريباً)
+        const rowMap = {};
+        dataLeaves.forEach((l) => {
+          const rowKey = Math.round(l.top / 25) * 25;
+          (rowMap[rowKey] = rowMap[rowKey] || []).push(l);
+        });
+
+        Object.values(rowMap).forEach((rowCells) => {
+          if (rowCells.length < 2) return;
+          const fields = {};
+          rowCells.forEach((cell) => {
+            // اربط الخلية بأقرب رأس عمود أفقياً
+            let nearest = null, minDist = Infinity;
+            rowHeaders.forEach((h) => {
+              const d = Math.abs(h.left - cell.left);
+              if (d < minDist) { minDist = d; nearest = h; }
+            });
+            if (nearest && minDist < 200 && cell.text) {
+              if (!fields[nearest.key]) fields[nearest.key] = cell.text;
+            }
+          });
+          if (!fields.caseNumber) {
+            const found = rowCells.map((c) => c.text).find((v) => /\d{4}\s*\/\s*\d{3,}|\d{9,}/.test(v));
+            if (found) fields.caseNumber = (found.match(/\d{4}\s*\/\s*\d{3,}|\d{9,}/) || [""])[0].replace(/\s/g, "");
+          }
+          if (!fields.caseNumber) return;
+
+          results.push({
+            _source: "screen_lawsuit_visual",
+            _kind: "case",
+            fields,
+            text: rowCells.map((c) => c.text).join(" | "),
+          });
+        });
+      }
+    }
+
+    return results;
+  }
+
+  // ============================================================
+  // سحب متخصص لجدول الأحكام والصكوك (حسب الصورة المرفقة رقم 3)
+  // الأعمدة: رقم الصك | نوع الحكم | رقم القضية | نوع القضية | المحكمة | المدعي | المدعى عليه | تاريخ الصك
+  // ============================================================
+  function scrapeJudgmentTable() {
+    const results = [];
+
+    const HEADER_MAP = [
+      { key: "deedNumber",  re: /رقم\s*الصك/ },
+      { key: "judgmentType",re: /نوع\s*الحكم/ },
+      { key: "caseNumber",  re: /رقم\s*القضية|رقم\s*الدعوى/ },
+      { key: "caseType",    re: /نوع\s*القضية|نوع\s*الدعوى/ },
+      { key: "court",       re: /^المحكمة$|المحكمة/ },
+      { key: "plaintiff",   re: /المدعي|اسم\s*المدعي/ },
+      { key: "defendant",   re: /المدعى\s*عليه|المدعي\s*عليه/ },
+      { key: "deedDate",    re: /تاريخ\s*الصك/ },
+    ];
+
+    function matchHeaderKey(headerText) {
+      const t = clean(headerText);
+      // ترتيب مهم: المدعى عليه قبل المدعي لتجنب الالتباس
+      if (/المدعى\s*عليه|المدعي\s*عليه/.test(t)) return "defendant";
+      for (const h of HEADER_MAP) {
+        if (h.key === "defendant") continue;
+        if (h.re.test(t)) return h.key;
+      }
+      return null;
+    }
+
+    // ===== المصدر 1: جداول HTML حقيقية =====
+    document.querySelectorAll("table").forEach((table) => {
+      const headerCells = [
+        ...table.querySelectorAll("thead th, thead td"),
+        ...(table.querySelector("thead") ? [] : Array.from(table.querySelectorAll("tr:first-child th, tr:first-child td"))),
+      ];
+      const headerTexts = headerCells.map((c) => clean(c.innerText || c.textContent));
+      // تحقق أن هذا جدول أحكام/صكوك (يحتوي رقم الصك + نوع الحكم)
+      const isJudgmentTable = headerTexts.some((h) => /رقم\s*الصك/.test(h)) &&
+        headerTexts.some((h) => /نوع\s*الحكم|تاريخ\s*الصك/.test(h));
+      if (!isJudgmentTable) return;
+
+      const colKeys = headerTexts.map((h) => matchHeaderKey(h));
+
+      const bodyRows = table.querySelectorAll("tbody tr").length
+        ? table.querySelectorAll("tbody tr")
+        : table.querySelectorAll("tr");
+      bodyRows.forEach((row, rowIndex) => {
+        if (rowIndex === 0 && row.querySelectorAll("th").length && !row.querySelectorAll("td").length) return;
+        const cells = [...row.querySelectorAll("td, th")].map((c) => clean(c.innerText || c.textContent));
+        if (cells.length < 3) return;
+
+        const fields = {};
+        cells.forEach((val, i) => {
+          const key = colKeys[i];
+          if (key && val) fields[key] = val;
+        });
+        if (!fields.deedNumber && !fields.caseNumber) {
+          const found = cells.find((v) => /\d{4}\s*\/\s*\d{3,}|\d{9,}/.test(v));
+          if (found) fields.caseNumber = (found.match(/\d{4}\s*\/\s*\d{3,}|\d{9,}/) || [""])[0].replace(/\s/g, "");
+        }
+        if (!fields.deedNumber && !fields.caseNumber) return;
+
+        results.push({
+          _source: "screen_judgment_table",
+          _kind: "judgment",
+          rowIndex,
+          fields,
+          text: cells.join(" | "),
+        });
+      });
+    });
+
+    // ===== المصدر 2: كشف الشاشة (divs/CSS grid بدون جدول HTML حقيقي) =====
+    if (results.length === 0) {
+      const allLeaf = [];
+      document.querySelectorAll("div, span, th, td, p").forEach((el) => {
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") return;
+        if (!el.getBoundingClientRect) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 2 || rect.height < 2) return;
+        const directText = clean(
+          Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.nodeValue).join(" ")
+        );
+        if (!directText || directText.length > 50) return;
+        allLeaf.push({ text: directText, top: Math.round(rect.top + window.scrollY), left: Math.round(rect.left), rect });
+      });
+
+      const headers = allLeaf
+        .map((l) => ({ ...l, key: matchHeaderKey(l.text) }))
+        .filter((l) => l.key);
+
+      // لا بد من وجود رأس "رقم الصك" لتأكيد أنه جدول أحكام
+      const hasDeedHeader = headers.some((h) => h.key === "deedNumber");
+      if (hasDeedHeader && headers.length >= 3) {
+        const headerTop = headers.find((h) => h.key === "deedNumber").top;
+        const rowHeaders = headers.filter((h) => Math.abs(h.top - headerTop) < 30);
+        rowHeaders.sort((a, b) => b.left - a.left);
+
+        const dataLeaves = allLeaf.filter((l) => l.top > headerTop + 20);
+        const rowMap = {};
+        dataLeaves.forEach((l) => {
+          const rowKey = Math.round(l.top / 25) * 25;
+          (rowMap[rowKey] = rowMap[rowKey] || []).push(l);
+        });
+
+        Object.values(rowMap).forEach((rowCells) => {
+          if (rowCells.length < 2) return;
+          const fields = {};
+          rowCells.forEach((cell) => {
+            let nearest = null, minDist = Infinity;
+            rowHeaders.forEach((h) => {
+              const d = Math.abs(h.left - cell.left);
+              if (d < minDist) { minDist = d; nearest = h; }
+            });
+            if (nearest && minDist < 200 && cell.text && !fields[nearest.key]) {
+              fields[nearest.key] = cell.text;
+            }
+          });
+          if (!fields.deedNumber && !fields.caseNumber) {
+            const found = rowCells.map((c) => c.text).find((v) => /\d{4}\s*\/\s*\d{3,}|\d{9,}/.test(v));
+            if (found) fields.caseNumber = (found.match(/\d{4}\s*\/\s*\d{3,}|\d{9,}/) || [""])[0].replace(/\s/g, "");
+          }
+          if (!fields.deedNumber && !fields.caseNumber) return;
+
+          results.push({
+            _source: "screen_judgment_visual",
+            _kind: "judgment",
+            fields,
+            text: rowCells.map((c) => c.text).join(" | "),
+          });
+        });
+      }
+    }
+
+    return results;
+  }
+
+  // ============================================================
+  // سحب متخصص لجدول طلبات التنفيذ (حسب الصورة المرفقة رقم 4)
+  // الأعمدة: رقم الطلب | نوع الطلب | نوع السند | تاريخ تقديم الطلب | اسم المنفذ ضده | اسم المحكمة | حالة الطلب
+  // ============================================================
+  function scrapeExecutionTable() {
+    const results = [];
+
+    const HEADER_MAP = [
+      { key: "requestNumber", re: /رقم\s*الطلب/ },
+      { key: "requestType",   re: /نوع\s*الطلب/ },
+      { key: "deedType",      re: /نوع\s*السند/ },
+      { key: "requestDate",   re: /تاريخ\s*تقديم\s*الطلب|تاريخ\s*الطلب/ },
+      { key: "defendant",     re: /اسم\s*المنفذ\s*ضده|المنفذ\s*ضده|المنفذ\s*عليه/ },
+      { key: "court",         re: /اسم\s*المحكمة|^المحكمة$/ },
+      { key: "status",        re: /حالة\s*الطلب|^الحالة$/ },
+    ];
+
+    function matchHeaderKey(headerText) {
+      const t = clean(headerText);
+      // ترتيب: نوع الطلب قبل رقم الطلب لتفادي التطابق الجزئي
+      if (/نوع\s*السند/.test(t)) return "deedType";
+      if (/نوع\s*الطلب/.test(t)) return "requestType";
+      if (/رقم\s*الطلب/.test(t)) return "requestNumber";
+      if (/تاريخ\s*تقديم\s*الطلب|تاريخ\s*الطلب/.test(t)) return "requestDate";
+      if (/المنفذ\s*ضده|المنفذ\s*عليه/.test(t)) return "defendant";
+      if (/اسم\s*المحكمة|^المحكمة$/.test(t)) return "court";
+      if (/حالة\s*الطلب|^الحالة$/.test(t)) return "status";
+      return null;
+    }
+
+    // ===== المصدر 1: جداول HTML حقيقية =====
+    document.querySelectorAll("table").forEach((table) => {
+      const headerCells = [
+        ...table.querySelectorAll("thead th, thead td"),
+        ...(table.querySelector("thead") ? [] : Array.from(table.querySelectorAll("tr:first-child th, tr:first-child td"))),
+      ];
+      const headerTexts = headerCells.map((c) => clean(c.innerText || c.textContent));
+      // تحقق أن هذا جدول طلبات تنفيذ (رقم الطلب + نوع السند أو المنفذ ضده)
+      const isExecTable = headerTexts.some((h) => /رقم\s*الطلب/.test(h)) &&
+        headerTexts.some((h) => /نوع\s*السند|المنفذ\s*ضده|حالة\s*الطلب/.test(h));
+      if (!isExecTable) return;
+
+      const colKeys = headerTexts.map((h) => matchHeaderKey(h));
+
+      const bodyRows = table.querySelectorAll("tbody tr").length
+        ? table.querySelectorAll("tbody tr")
+        : table.querySelectorAll("tr");
+      bodyRows.forEach((row, rowIndex) => {
+        if (rowIndex === 0 && row.querySelectorAll("th").length && !row.querySelectorAll("td").length) return;
+        const cells = [...row.querySelectorAll("td, th")].map((c) => clean(c.innerText || c.textContent));
+        if (cells.length < 3) return;
+
+        const fields = {};
+        cells.forEach((val, i) => {
+          const key = colKeys[i];
+          if (key && val) fields[key] = val;
+        });
+        if (!fields.requestNumber) {
+          const found = cells.find((v) => /\d{4}\s*\/\s*\d{3,}|\d{9,}/.test(v));
+          if (found) fields.requestNumber = (found.match(/\d{4}\s*\/\s*\d{3,}|\d{9,}/) || [""])[0].replace(/\s/g, "");
+        }
+        if (!fields.requestNumber) return;
+
+        results.push({
+          _source: "screen_execution_table",
+          _kind: "execution",
+          rowIndex,
+          fields,
+          text: cells.join(" | "),
+        });
+      });
+    });
+
+    // ===== المصدر 2: كشف الشاشة (divs/CSS grid) =====
+    if (results.length === 0) {
+      const allLeaf = [];
+      document.querySelectorAll("div, span, th, td, p").forEach((el) => {
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") return;
+        if (!el.getBoundingClientRect) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 2 || rect.height < 2) return;
+        const directText = clean(
+          Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.nodeValue).join(" ")
+        );
+        if (!directText || directText.length > 50) return;
+        allLeaf.push({ text: directText, top: Math.round(rect.top + window.scrollY), left: Math.round(rect.left), rect });
+      });
+
+      const headers = allLeaf
+        .map((l) => ({ ...l, key: matchHeaderKey(l.text) }))
+        .filter((l) => l.key);
+
+      const hasReqHeader = headers.some((h) => h.key === "requestNumber");
+      if (hasReqHeader && headers.length >= 3) {
+        const headerTop = headers.find((h) => h.key === "requestNumber").top;
+        const rowHeaders = headers.filter((h) => Math.abs(h.top - headerTop) < 30);
+        rowHeaders.sort((a, b) => b.left - a.left);
+
+        const dataLeaves = allLeaf.filter((l) => l.top > headerTop + 20);
+        const rowMap = {};
+        dataLeaves.forEach((l) => {
+          const rowKey = Math.round(l.top / 25) * 25;
+          (rowMap[rowKey] = rowMap[rowKey] || []).push(l);
+        });
+
+        Object.values(rowMap).forEach((rowCells) => {
+          if (rowCells.length < 2) return;
+          const fields = {};
+          rowCells.forEach((cell) => {
+            let nearest = null, minDist = Infinity;
+            rowHeaders.forEach((h) => {
+              const d = Math.abs(h.left - cell.left);
+              if (d < minDist) { minDist = d; nearest = h; }
+            });
+            if (nearest && minDist < 200 && cell.text && !fields[nearest.key]) {
+              fields[nearest.key] = cell.text;
+            }
+          });
+          if (!fields.requestNumber) {
+            const found = rowCells.map((c) => c.text).find((v) => /\d{4}\s*\/\s*\d{3,}|\d{9,}/.test(v));
+            if (found) fields.requestNumber = (found.match(/\d{4}\s*\/\s*\d{3,}|\d{9,}/) || [""])[0].replace(/\s/g, "");
+          }
+          if (!fields.requestNumber) return;
+
+          results.push({
+            _source: "screen_execution_visual",
+            _kind: "execution",
+            fields,
+            text: rowCells.map((c) => c.text).join(" | "),
+          });
+        });
+      }
+    }
+
+    return results;
+  }
+
+  // ============================================================
+  // سحب متخصص لجدول الوكالات القضائية (حسب الصورة المرفقة رقم 5)
+  // الأعمدة: رقم الوكالة | تاريخ إصدار الوكالة | تاريخ انتهاء الوكالة | اسم الوكيل | حالة الوكالة
+  // ============================================================
+  function scrapeAgencyTable() {
+    const results = [];
+
+    function matchHeaderKey(headerText) {
+      const t = clean(headerText);
+      if (/رقم\s*الوكالة/.test(t)) return "agencyNumber";
+      if (/تاريخ\s*إصدار\s*الوكالة|تاريخ\s*الإصدار/.test(t)) return "issueDate";
+      if (/تاريخ\s*انتهاء\s*الوكالة|تاريخ\s*الانتهاء|تاريخ\s*الإنتهاء/.test(t)) return "expiryDate";
+      if (/اسم\s*الوكيل|الوكيل/.test(t)) return "agent";
+      if (/حالة\s*الوكالة|^الحالة$/.test(t)) return "status";
+      if (/اسم\s*الموكل|الموكل/.test(t)) return "principal";
+      if (/نوع\s*الوكالة/.test(t)) return "poaType";
+      return null;
+    }
+
+    // ===== المصدر 1: جداول HTML حقيقية =====
+    document.querySelectorAll("table").forEach((table) => {
+      const headerCells = [
+        ...table.querySelectorAll("thead th, thead td"),
+        ...(table.querySelector("thead") ? [] : Array.from(table.querySelectorAll("tr:first-child th, tr:first-child td"))),
+      ];
+      const headerTexts = headerCells.map((c) => clean(c.innerText || c.textContent));
+      const isAgencyTable = headerTexts.some((h) => /رقم\s*الوكالة/.test(h)) &&
+        headerTexts.some((h) => /تاريخ\s*(?:إصدار|انتهاء|الإنتهاء)|اسم\s*الوكيل|حالة\s*الوكالة/.test(h));
+      if (!isAgencyTable) return;
+
+      const colKeys = headerTexts.map((h) => matchHeaderKey(h));
+
+      const bodyRows = table.querySelectorAll("tbody tr").length
+        ? table.querySelectorAll("tbody tr")
+        : table.querySelectorAll("tr");
+      bodyRows.forEach((row, rowIndex) => {
+        if (rowIndex === 0 && row.querySelectorAll("th").length && !row.querySelectorAll("td").length) return;
+        const cells = [...row.querySelectorAll("td, th")].map((c) => clean(c.innerText || c.textContent));
+        if (cells.length < 2) return;
+
+        const fields = {};
+        cells.forEach((val, i) => {
+          const key = colKeys[i];
+          if (key && val) fields[key] = val;
+        });
+        if (!fields.agencyNumber) {
+          const found = cells.find((v) => /\d{6,}/.test(v));
+          if (found) fields.agencyNumber = (found.match(/\d{6,}/) || [""])[0];
+        }
+        if (!fields.agencyNumber) return;
+
+        results.push({
+          _source: "screen_agency_table",
+          _kind: "agency",
+          rowIndex,
+          fields,
+          text: cells.join(" | "),
+        });
+      });
+    });
+
+    // ===== المصدر 2: كشف الشاشة (divs/CSS grid) =====
+    if (results.length === 0) {
+      const allLeaf = [];
+      document.querySelectorAll("div, span, th, td, p").forEach((el) => {
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") return;
+        if (!el.getBoundingClientRect) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 2 || rect.height < 2) return;
+        const directText = clean(
+          Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.nodeValue).join(" ")
+        );
+        if (!directText || directText.length > 50) return;
+        allLeaf.push({ text: directText, top: Math.round(rect.top + window.scrollY), left: Math.round(rect.left), rect });
+      });
+
+      const headers = allLeaf
+        .map((l) => ({ ...l, key: matchHeaderKey(l.text) }))
+        .filter((l) => l.key);
+
+      const hasAgencyHeader = headers.some((h) => h.key === "agencyNumber");
+      if (hasAgencyHeader && headers.length >= 2) {
+        const headerTop = headers.find((h) => h.key === "agencyNumber").top;
+        const rowHeaders = headers.filter((h) => Math.abs(h.top - headerTop) < 30);
+        rowHeaders.sort((a, b) => b.left - a.left);
+
+        const dataLeaves = allLeaf.filter((l) => l.top > headerTop + 20);
+        const rowMap = {};
+        dataLeaves.forEach((l) => {
+          const rowKey = Math.round(l.top / 25) * 25;
+          (rowMap[rowKey] = rowMap[rowKey] || []).push(l);
+        });
+
+        Object.values(rowMap).forEach((rowCells) => {
+          if (rowCells.length < 2) return;
+          const fields = {};
+          rowCells.forEach((cell) => {
+            let nearest = null, minDist = Infinity;
+            rowHeaders.forEach((h) => {
+              const d = Math.abs(h.left - cell.left);
+              if (d < minDist) { minDist = d; nearest = h; }
+            });
+            if (nearest && minDist < 200 && cell.text && !fields[nearest.key]) {
+              fields[nearest.key] = cell.text;
+            }
+          });
+          if (!fields.agencyNumber) {
+            const found = rowCells.map((c) => c.text).find((v) => /\d{6,}/.test(v));
+            if (found) fields.agencyNumber = (found.match(/\d{6,}/) || [""])[0];
+          }
+          if (!fields.agencyNumber) return;
+
+          results.push({
+            _source: "screen_agency_visual",
+            _kind: "agency",
+            fields,
+            text: rowCells.map((c) => c.text).join(" | "),
+          });
+        });
+      }
+    }
+
+    return results;
+  }
+
+  function collectScreenItems() {
+    const items = [];
+    const seen = new Set();
+
+    // ===== سحب متخصص لجدول القضايا في صفحة lawsuit (حسب الصورة المرفقة) =====
+    // الأعمدة: رقم القضية | تاريخ القضية | نوع القضية | الصفة | المدعي | المدعى عليه | الحالة
+    const lawsuitCases = scrapeLawsuitCaseTable();
+    lawsuitCases.forEach((c) => {
+      const key = "lawsuitcase_" + (c.fields.caseNumber || "").replace(/\s/g, "");
+      if (c.fields.caseNumber && !seen.has(key)) {
+        seen.add(key);
+        items.push(c);
+      }
+    });
+
+    // ===== سحب متخصص لجدول الأحكام والصكوك (حسب الصورة المرفقة رقم 3) =====
+    // الأعمدة: رقم الصك | نوع الحكم | رقم القضية | نوع القضية | المحكمة | المدعي | المدعى عليه | تاريخ الصك
+    const judgmentRows = scrapeJudgmentTable();
+    judgmentRows.forEach((j) => {
+      const idVal = (j.fields.deedNumber || j.fields.caseNumber || "").replace(/\s/g, "");
+      const key = "judgment_" + idVal;
+      if (idVal && !seen.has(key)) {
+        seen.add(key);
+        items.push(j);
+      }
+    });
+
+    // ===== سحب متخصص لجدول طلبات التنفيذ (حسب الصورة المرفقة رقم 4) =====
+    // الأعمدة: رقم الطلب | نوع الطلب | نوع السند | تاريخ تقديم الطلب | اسم المنفذ ضده | اسم المحكمة | حالة الطلب
+    const executionRows = scrapeExecutionTable();
+    executionRows.forEach((e) => {
+      const idVal = (e.fields.requestNumber || "").replace(/\s/g, "");
+      const key = "execution_" + idVal;
+      if (idVal && !seen.has(key)) {
+        seen.add(key);
+        items.push(e);
+      }
+    });
+
+    // ===== سحب متخصص لجدول الوكالات القضائية (حسب الصورة المرفقة رقم 5) =====
+    // الأعمدة: رقم الوكالة | تاريخ إصدار الوكالة | تاريخ انتهاء الوكالة | اسم الوكيل | حالة الوكالة
+    const agencyRows = scrapeAgencyTable();
+    agencyRows.forEach((a) => {
+      const idVal = (a.fields.agencyNumber || "").replace(/\s/g, "");
+      const key = "agency_" + idVal;
+      if (idVal && !seen.has(key)) {
+        seen.add(key);
+        items.push(a);
+      }
+    });
+
+    // تحقق أن العنصر مرئي فعلاً على الشاشة
+    function isOnScreen(el) {
+      if (!el || !el.getBoundingClientRect) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || parseFloat(style.opacity || "1") === 0) return false;
+      if (!el.offsetParent && style.position !== "fixed") return false;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) return false;
+      // ضمن حدود الصفحة المرئية أو القابلة للتمرير
+      return rect.bottom > 0 && rect.right > 0 &&
+             rect.top < (window.innerHeight + window.scrollY + 3000) &&
+             rect.left < (window.innerWidth + 1000);
+    }
+
+    // 1) قراءة كل النص المرئي عبر TreeWalker للعناصر النصية الورقية (leaf nodes)
+    function gatherVisibleLeafBlocks() {
+      const blocks = [];
+      const candidates = document.querySelectorAll(
+        "div, span, p, li, td, th, dd, dt, h1, h2, h3, h4, h5, h6, [class*='label' i], [class*='value' i], [class*='cell' i], [class*='text' i]"
+      );
+      candidates.forEach((el) => {
+        if (el.closest("#adala-panel") || el.id === "adala-fab" || el.closest("#adala-root")) return;
+        if (!isOnScreen(el)) return;
+        // العناصر الورقية: لا تحتوي عناصر فرعية ذات نص طويل
+        const directText = clean(
+          Array.from(el.childNodes)
+            .filter((n) => n.nodeType === 3)
+            .map((n) => n.nodeValue)
+            .join(" ")
+        );
+        const fullText = clean(el.innerText || el.textContent || "");
+        const text = directText.length >= 3 ? directText : fullText;
+        if (text.length < 3 || text.length > 600) return;
+        blocks.push({ el, text, rect: el.getBoundingClientRect() });
+      });
+      return blocks;
+    }
+
+    // 2) تجميع الكتل المرئية المتقاربة (نفس البطاقة/الصف) في سجل واحد
+    function groupNearbyBlocks(blocks) {
+      const groups = [];
+      const used = new Set();
+      blocks.forEach((b, i) => {
+        if (used.has(i)) return;
+        const groupTexts = [b.text];
+        used.add(i);
+        for (let j = i + 1; j < blocks.length; j++) {
+          if (used.has(j)) continue;
+          const o = blocks[j];
+          // متقاربة عمودياً (نفس البطاقة/الصف خلال 120px)
+          if (Math.abs(o.rect.top - b.rect.top) < 60 ||
+              (o.rect.top - b.rect.top > 0 && o.rect.top - b.rect.top < 120 && Math.abs(o.rect.left - b.rect.left) < 500)) {
+            groupTexts.push(o.text);
+            used.add(j);
+          }
+        }
+        const merged = groupTexts.join(" | ");
+        if (merged.length >= 6) groups.push(merged);
+      });
+      return groups;
+    }
+
+    const blocks = gatherVisibleLeafBlocks();
+    const grouped = groupNearbyBlocks(blocks);
+
+    // 3) تحويل كل مجموعة مرئية إلى عنصر بيانات بنفس صيغة الطريقة الحالية
+    grouped.forEach((text, index) => {
+      // لا بد أن يحمل النص دلالة عمل قانوني أو رقماً مهماً
+      if (!containsBusinessWords(text) && !/\d{4}\s*\/\s*\d{3,}|\d{6,}|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}/.test(text)) return;
+
+      // مفتاح إزالة التكرار
+      const dedupeKey = text.replace(/\s+/g, "").slice(0, 120);
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+
+      items.push({
+        _source: "screen_visual",
+        _kind: inferKindFromText(text),
+        index,
+        text: text.slice(0, MAX_RAW_TEXT),
+        fields: extractFieldsFromText(text),
+      });
+    });
+
+    // 4) سحب إضافي من البطاقات/الصناديق المرئية كوحدة كاملة (للصفحات الديناميكية)
+    const cardSelectors = [
+      "[class*='card' i]", "[class*='Card']",
+      "[class*='item' i]", "[class*='box' i]",
+      "[class*='panel' i]", "[class*='widget' i]",
+      "[class*='event' i]", "[class*='appointment' i]",
+      "[class*='case' i]", "[class*='lawsuit' i]",
+      "[role='listitem']", "[role='row']",
+    ].join(",");
+
+    document.querySelectorAll(cardSelectors).forEach((el, index) => {
+      if (el.closest("#adala-panel") || el.id === "adala-fab" || el.closest("#adala-root")) return;
+      if (!isOnScreen(el)) return;
+      const text = clean(el.innerText || el.textContent || "");
+      if (text.length < 12 || text.length > MAX_RAW_TEXT) return;
+      if (!containsBusinessWords(text) && !/\d{4}\s*\/\s*\d{3,}|\d{6,}/.test(text)) return;
+
+      const dedupeKey = "card_" + text.replace(/\s+/g, "").slice(0, 120);
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+
+      items.push({
+        _source: "screen_card",
+        _kind: inferKindFromText(text),
+        index,
+        text: text.slice(0, MAX_RAW_TEXT),
+        fields: extractFieldsFromText(text),
+      });
+    });
+
+    return items;
+  }
+
+  function collectNetworkItems(network, type) {
+    const items = [];
+    network.forEach((entry) => {
+      const objects = flattenObjects(entry.body).slice(0, 300);
+      objects.forEach((object, index) => {
+        const text = objectToText(object);
+        if (text.length < 8 || !isBusinessObject(object, text)) return;
+        const kind = inferKindFromText(`${entry.url} ${text}`);
+        if (type !== "all" && !kindMatchesType(kind, type) && !isTextRelevantToType(`${entry.url} ${text}`, type)) return;
+        items.push({ _source: "network", _kind: kind, url: entry.url, index, fields: compactObject(object), text: text.slice(0, MAX_RAW_TEXT) });
+      });
+    });
+    return items;
+  }
+
+  function normalizeItems(items, type) {
+    const filtered = filterItemsForType(items, type);
+    return {
+      cases: normalizeCollection(filtered, "case", normalizeCase),
+      clients: normalizeCollection(filtered, "client", normalizeClient),
+      sessions: normalizeCollection(filtered, "session", normalizeSession),
+      agencies: normalizeCollection(filtered, "agency", normalizeAgency),
+      executions: normalizeCollection(filtered, "execution", normalizeExecution),
+      requests: normalizeCollection(filtered, "request", normalizeRequest),
+      minutes: normalizeCollection(filtered, "minute", normalizeMinute),
+      judgments: normalizeCollection(filtered, "judgment", normalizeJudgment),
+      notices: normalizeCollection(filtered, "notice", normalizeNotice),
+      documents: normalizeCollection(filtered, "document", normalizeDocument),
+    };
+  }
+
+  function normalizeCollection(items, kind, mapper) {
+    const relevant = items.filter((item) => item._kind === kind || (kind === "client" && /مدعي|مدعى|موكل|وكيل|طرف/.test(item.text || "")));
+    return dedupeObjects(relevant.map(mapper).filter(Boolean)).slice(0, 200);
+  }
+
+  function normalizeCase(item) {
+    const fields = item.fields || {};
+    const text = item.text || objectToText(fields);
+    const caseNumber = fields.caseNumber || valueByKeys(fields, /case.*(no|num|id)|lawsuit.*(no|num|id)|رقم.*(قض|دعوى)|قضية/i) || match(text, /\b\d{4}\s*\/\s*\d{3,}\b|\b\d{9,}\b/);
+    if (!caseNumber && !/قضية|دعوى|محكمة/.test(text)) return null;
+
+    // استخراج أطراف الدعوى
+    const plaintiff = valueByKeys(fields, /plaintiff|مدعي|صاحب الطلب|المدعي/i) ||
+      match(text, /(المدعي|صاحب الطلب)\s*[:：]?\s*([^|\n،]{3,60})/, 2) || "";
+    const defendant = valueByKeys(fields, /defendant|مدعى عليه|المدعى/i) ||
+      match(text, /(المدعى عليه|الخصم)\s*[:：]?\s*([^|\n،]{3,60})/, 2) || "";
+
+    // استخراج المحامين
+    const lawyer = valueByKeys(fields, /lawyer|attorney|محامي|وكيل المدعي|المحامي/i) ||
+      match(text, /(المحامي|وكيل المدعي)\s*[:：]?\s*([^|\n،]{3,60})/, 2) || "";
+
+    // استخراج رقم الدائرة
+    const circuit = valueByKeys(fields, /circuit|دائرة|دائره/i) ||
+      match(text, /(?:الدائرة|دائرة)\s*(?:رقم)?\s*([\d\u0660-\u0669]+)/) || "";
+
+    // استخراج موضوع الدعوى
+    const subject = valueByKeys(fields, /subject|موضوع الدعوى|موضوع الدعوي|موضوع/i) ||
+      valueByKeys(fields, /description|وصف/i) || "";
+
+    // استخراج تفاصيل الدعوى
+    const details = valueByKeys(fields, /details|تفاصيل|تفاصيل الدعوى/i) || "";
+
+    // استخراج الطلبات
+    const requests = valueByKeys(fields, /requests|طلبات|الطلبات/i) || "";
+
+    // استخراج تاريخ الحكم
+    const judgmentDate = valueByKeys(fields, /judgmentDate|judgment.*date|تاريخ الحكم/i) || "";
+    const judgmentType = valueByKeys(fields, /judgmentType|judgment.*type|نوع الحكم|الحكم/i) ||
+      match(text, /حكم\s*(?:ابتدائي|استئنافي|نهائي|لصالح|ضد)\s*[^\n،|]{0,50}/) || "";
+
+    return {
+      caseNumber: caseNumber || "",
+      caseName: valueByKeys(fields, /name|title|subject|اسم|موضوع|وصف/i) || firstLine(text),
+      caseDate: fields.caseDate || valueByKeys(fields, /caseDate|تاريخ القضية|تاريخ الدعوى|تاريخ القيد/i) || "",
+      caseType: fields.caseType || valueByKeys(fields, /caseType|نوع القضية|نوع الدعوى/i) || "",
+      capacity: fields.capacity || valueByKeys(fields, /capacity|الصفة|صفة/i) || "",
+      court: valueByKeys(fields, /court|محكمة|دائرة/i) || match(text, /[^\n|،]{0,30}محكمة[^\n|،]{0,40}/) || "",
+      circuit: circuit,
+      status: fields.status || valueByKeys(fields, /status|state|حالة/i) || match(text, /قيد النظر|منتهية|منتهي|محكوم|مؤجلة|نشطة|مغلقة/) || "",
+      plaintiff: fields.plaintiff || plaintiff,
+      defendant: fields.defendant || defendant,
+      lawyer: lawyer,
+      subject: subject,
+      details: details,
+      requests: requests,
+      judgmentDate: judgmentDate,
+      judgmentType: judgmentType,
+      raw: item,
+    };
+  }
+
+  function normalizeClient(item) {
+    const fields = item.fields || {};
+    const text = item.text || objectToText(fields);
+    const name = valueByKeys(fields, /client|party|person|plaintiff|defendant|name|موكل|طرف|مدعي|مدعى|اسم/i) || match(text, /(المدعي|المدعى عليه|الموكل|الوكيل|صاحب الطلب)\s*[:：]?\s*([^|\n،]{3,80})/, 2);
+    if (!name) return null;
+    return {
+      name: clean(name),
+      role: valueByKeys(fields, /role|صفة|دور/i) || match(text, /مدعي|مدعى عليه|موكل|وكيل|منفذ ضده|طالب التنفيذ/),
+      identityNumber: valueByKeys(fields, /national|identity|idNumber|هوية|سجل/i) || match(text, /\b[12]\d{9}\b/),
+      raw: item,
+    };
+  }
+
+  function normalizeSession(item) {
+    const fields = item.fields || {};
+    const text = item.text || objectToText(fields);
+    const date = valueByKeys(fields, /date|sessionDate|hearingDate|تاريخ|موعد/i) || matchDate(text);
+    if (!date && !/جلسة|موعد|تقاضي/.test(text)) return null;
+    return {
+      date: date || "",
+      time: valueByKeys(fields, /time|وقت|ساعة/i) || match(text, /\b\d{1,2}:\d{2}\b/) || "",
+      caseNumber: valueByKeys(fields, /case.*(no|num)|رقم.*قض/i) || match(text, /\b\d{4}\s*\/\s*\d{3,}\b|\b\d{9,}\b/) || "",
+      court: valueByKeys(fields, /court|محكمة|دائرة/i) || match(text, /[^\n|،]{0,30}محكمة[^\n|،]{0,40}/) || "",
+      hall: valueByKeys(fields, /hall|قاعة|قاعه/i) || match(text, /(?:قاعة|قاعه)\s*(?:رقم)?\s*([\d\u0660-\u0669]+)/) || "",
+      circuit: valueByKeys(fields, /circuit|دائرة/i) || "",
+      sessionType: valueByKeys(fields, /type|sessionType|نوع الجلسة/i) || "",
+      status: valueByKeys(fields, /status|حالة/i) || match(text, /قادمة|منتهية|مؤجلة|ملغاة/) || "قادمة",
+      raw: item,
+    };
+  }
+
+  function normalizeAgency(item) {
+    const fields = item.fields || {};
+    const text = item.text || objectToText(fields);
+    const agencyNumber = fields.agencyNumber || valueByKeys(fields, /agency|poa|wakalah|وكال|رقم/i) || match(text, /\b\d{9,}\b/);
+    if (!agencyNumber && !/وكالة|وكالات|موكل|وكيل/.test(text)) return null;
+    return {
+      agencyNumber: agencyNumber || "",
+      principal: fields.principal || valueByKeys(fields, /principal|موكل|اسم الموكل/i) || "",
+      agent: fields.agent || valueByKeys(fields, /agent|وكيل|اسم الوكيل/i) || "",
+      poaType: fields.poaType || valueByKeys(fields, /type|نوع الوكالة|نوع/i) || "عامة",
+      status: fields.status || valueByKeys(fields, /status|حالة|حالة الوكالة/i) || match(text, /سارية|منتهية|موقوفة|نشطة|فعالة/) || "سارية",
+      issueDate: fields.issueDate || valueByKeys(fields, /issue|start|إصدار|تاريخ الإصدار|تاريخ إصدار الوكالة|بداية/i) || "",
+      expiryDate: fields.expiryDate || valueByKeys(fields, /expiry|expire|endDate|انتهاء|نهاية|تاريخ الانتهاء|تاريخ انتهاء الوكالة/i) || matchDate(text) || "",
+      scope: valueByKeys(fields, /scope|نطاق|صلاحيات/i) || "",
+      raw: item,
+    };
+  }
+
+  function normalizeExecution(item) {
+    const fields = item.fields || {};
+    const text = item.text || objectToText(fields);
+    const executionNumber = fields.requestNumber || valueByKeys(fields, /execution|enforcement|request.*(no|num)|تنفيذ|طلب/i) || match(text, /\b\d{9,}\b/);
+    if (!executionNumber && !/تنفيذ|منفذ|طالب التنفيذ|طلب/.test(text)) return null;
+    return {
+      executionNumber: executionNumber || "",
+      requestType: fields.requestType || valueByKeys(fields, /requestType|نوع الطلب/i) || "",
+      deedType: fields.deedType || valueByKeys(fields, /deedType|نوع السند/i) || "",
+      status: fields.status || valueByKeys(fields, /status|حالة/i) || match(text, /قيد التنفيذ|منتهي|معلق|مكتمل|جديد|نشط/) || "",
+      amount: valueByKeys(fields, /amount|مبلغ|قيمة/i) || match(text, /([\d,]+(?:\.\d+)?)\s*(?:ريال|ر\.س|SAR)/) || "",
+      court: fields.court || valueByKeys(fields, /court|محكمة|اسم المحكمة/i) || match(text, /[^\n|،]{0,30}محكمة[^\n|،]{0,40}/) || "",
+      requester: valueByKeys(fields, /requester|طالب التنفيذ|المنفذ له/i) || "",
+      defendant: fields.defendant || valueByKeys(fields, /defendant|منفذ ضده|المنفذ عليه/i) || "",
+      requestDate: fields.requestDate || valueByKeys(fields, /requestDate|date|تاريخ الطلب|تاريخ تقديم الطلب|تاريخ/i) || matchDate(text) || "",
+      raw: item,
+    };
+  }
+
+  function normalizeRequest(item) { return normalizeGeneric(item, /طلب|requests?/i, "requestNumber"); }
+  function normalizeMinute(item) { return normalizeGeneric(item, /محضر|ضبط|minutes?/i, "minuteNumber"); }
+  function normalizeJudgment(item) {
+    const fields = item.fields || {};
+    const text = item.text || objectToText(fields);
+
+    // إذا كان من جدول الأحكام المتخصص — استخدم الحقول مباشرة
+    const deedNumber = fields.deedNumber || valueByKeys(fields, /deedNumber|رقم الصك|صك/i) || "";
+    const judgmentType = fields.judgmentType || valueByKeys(fields, /judgmentType|نوع الحكم/i) || "";
+    const caseNumber = fields.caseNumber || valueByKeys(fields, /caseNumber|رقم القضية|رقم الدعوى/i) ||
+      match(text, /\b\d{4}\s*\/\s*\d{3,}\b|\b\d{9,}\b/) || "";
+
+    // لا بد من دلالة حكم/صك
+    if (!deedNumber && !/حكم|استئناف|صك|judg|appeal|deed/i.test(text) && !judgmentType) return null;
+
+    return {
+      judgmentNumber: deedNumber || caseNumber || "",
+      deedNumber: deedNumber,
+      judgmentType: judgmentType || match(text, /حكم\s*(?:ابتدائي|استئنافي|نهائي|لصالح|ضد)/) || "",
+      caseNumber: caseNumber,
+      caseType: fields.caseType || valueByKeys(fields, /caseType|نوع القضية/i) || "",
+      court: fields.court || valueByKeys(fields, /court|المحكمة|محكمة/i) || match(text, /[^\n|،]{0,30}محكمة[^\n|،]{0,40}/) || "",
+      plaintiff: fields.plaintiff || valueByKeys(fields, /plaintiff|المدعي/i) || "",
+      defendant: fields.defendant || valueByKeys(fields, /defendant|المدعى عليه/i) || "",
+      deedDate: fields.deedDate || valueByKeys(fields, /deedDate|تاريخ الصك/i) || matchDate(text) || "",
+      title: judgmentType || valueByKeys(fields, /title|name|subject|نوع/i) || firstLine(text),
+      date: fields.deedDate || matchDate(text) || "",
+      raw: item,
+    };
+  }
+  function normalizeNotice(item) { return normalizeGeneric(item, /إشعار|اشعار|تنبيه|notification|notice/i, "noticeNumber"); }
+  function normalizeDocument(item) { return normalizeGeneric(item, /مستند|مرفق|وثيقة|document|attachment/i, "documentNumber"); }
+
+  function normalizeGeneric(item, keyword, idField) {
+    const fields = item.fields || {};
+    const text = item.text || objectToText(fields);
+    if (!keyword.test(text) && !keyword.test(objectToText(fields))) return null;
+    return {
+      [idField]: valueByKeys(fields, /number|num|no|id|رقم/i) || match(text, /\b\d{6,}\b/) || "",
+      title: valueByKeys(fields, /title|name|subject|اسم|موضوع|نوع/i) || firstLine(text),
+      date: valueByKeys(fields, /date|تاريخ/i) || matchDate(text),
+      raw: item,
+    };
+  }
+
+  function makeSummary(normalized, items, network) {
+    return {
+      totalItems: items.length,
+      networkResponses: network.length,
+      screenItems: items.filter((i) => i._source === "screen_visual" || i._source === "screen_card").length,
+      domItems: items.filter((i) => i._source === "dom_table" || i._source === "dom_block").length,
+      cases: normalized.cases.length,
+      clients: normalized.clients.length,
+      sessions: normalized.sessions.length,
+      agencies: normalized.agencies.length,
+      executions: normalized.executions.length,
+      requests: normalized.requests.length,
+      minutes: normalized.minutes.length,
+      judgments: normalized.judgments.length,
+      notices: normalized.notices.length,
+      documents: normalized.documents.length,
+    };
+  }
+
+  function filterItemsForType(items, type) {
+    if (type === "all") return items;
+    return items.filter((item) => kindMatchesType(item._kind, type) || isTextRelevantToType(`${item.url || ""} ${item.text || ""} ${objectToText(item.fields || {})}`, type));
+  }
+
+  function inferKindFromText(text) {
+    const value = clean(text);
+    if (/(lawsuit|case|قضية|قضايا|دعوى|دعاوى|محكمة)/i.test(value)) return "case";
+    if (/(hearing|session|appointment|جلسة|جلسات|موعد|مواعيد)/i.test(value)) return "session";
+    if (/(agency|poa|wakalah|wekal|وكالة|وكالات|وكيل|موكل)/i.test(value)) return "agency";
+    if (/(execution|enforcement|iexecution|تنفيذ|منفذ)/i.test(value)) return "execution";
+    if (/(request|طلبات|طلب على القضية|طلب جديد)/i.test(value)) return "request";
+    if (/(minute|minutes|محضر|ضبط)/i.test(value)) return "minute";
+    if (/(judgment|appeal|حكم|أحكام|استئناف)/i.test(value)) return "judgment";
+    if (/(notice|notification|إشعار|اشعار|تنبيه)/i.test(value)) return "notice";
+    if (/(document|attachment|مستند|مرفق|وثيقة)/i.test(value)) return "document";
+    if (/(client|party|person|مدعي|مدعى|طرف|أطراف)/i.test(value)) return "client";
+    return "record";
+  }
+
+  function kindMatchesType(kind, type) {
+    const map = { cases: "case", clients: "client", sessions: "session", executions: "execution", requests: "request", minutes: "minute", agencies: "agency", judgments: "judgment", notices: "notice", documents: "document" };
+    return map[type] === kind;
+  }
+
+  function isCaptureRelevantToType(entry, type) { return isTextRelevantToType(`${entry.url} ${objectToText(entry.body)}`, type); }
+  function isTextRelevantToType(text, type) { return kindMatchesType(inferKindFromText(text), type); }
+  function isNajizBusinessUrl(url) { return /(lawsuit|case|hearing|session|appointment|agency|wekal|poa|execution|notification|document|judgment|appeal|request)/i.test(url || ""); }
+  function containsNajizBusinessWords(body) { return /(قضية|قضايا|دعوى|جلسة|وكالة|تنفيذ|محكمة|موكل|مدعي|إشعار|مستند|حكم)/.test(objectToText(body)); }
+  function isBusinessObject(object, text) { return object && typeof object === "object" && (Object.keys(object).length >= 2 || /\d{6,}|قضية|جلسة|وكالة|تنفيذ|محكمة/.test(text)); }
+
+  function flattenObjects(value, output = [], depth = 0) {
+    if (depth > 7 || output.length > 1000 || value == null) return output;
+    if (Array.isArray(value)) {
+      value.forEach((item) => flattenObjects(item, output, depth + 1));
+      return output;
+    }
+    if (typeof value === "object") {
+      output.push(value);
+      Object.values(value).forEach((item) => {
+        if (item && typeof item === "object") flattenObjects(item, output, depth + 1);
+      });
+    }
+    return output;
+  }
+
+  function compactObject(object) {
+    const result = {};
+    Object.entries(object || {}).forEach(([key, value]) => {
+      if (value == null) return;
+      if (["string", "number", "boolean"].includes(typeof value)) result[key] = String(value).slice(0, 500);
+    });
     return result;
   }
 
-  window.__ADALA_NAJIZ__ = {
-    detectKindFromUrl,
-    autoScrollFull,
-    autoScrollQuick,
-    tryLoadMore,
-    clickSubTab,
-    async scrape(kindFilter) {
-      await autoScrollFull();
-      const urlKind = detectKindFromUrl();
-      const kind = kindFilter || urlKind || "mixed";
-      const payload = { kind: kind === "documents" ? "documents" : kind, sourceUrl: location.href };
-
-      // 1) Collect from main document
-      let groups = collectTableGroups(document);
-      // 2) Also dive into same-origin iframes (some Najiz pages use frames)
-      for (const fr of $all("iframe")) {
-        try {
-          if (fr.contentDocument) groups = groups.concat(collectTableGroups(fr.contentDocument));
-        } catch {}
-      }
-
-      const focus = kindFilter || urlKind;
-      payload.cases = scrapeCases(groups, focus === "cases");
-      payload.powers = scrapePowers(groups, focus === "powers");
-      payload.executions = scrapeExecutions(groups, focus === "executions");
-      payload.sessions = scrapeSessions(groups, focus === "sessions");
-      payload.documents = scrapeDocuments(groups, focus === "documents");
-
-      // 3) Text-mode fallback when DOM extraction came up empty
-      const sum = payload.cases.length + payload.powers.length + payload.executions.length
-        + payload.sessions.length + payload.documents.length;
-      if (sum === 0) {
-        const tx = scrapeFromText();
-        if (focus === "cases" || !focus) payload.cases = tx.cases;
-        if (focus === "powers" || !focus) payload.powers = tx.powers;
-        if (focus === "executions" || !focus) payload.executions = tx.executions;
-        if (focus === "sessions" || !focus) payload.sessions = tx.sessions;
-        if (focus === "documents") payload.documents = []; // text mode doesn't reliably extract docs
-      }
-
-      console.log("[منصة العدالة] groups:", groups.length, "→",
-        { cases: payload.cases.length, powers: payload.powers.length,
-          executions: payload.executions.length, sessions: payload.sessions.length,
-          documents: payload.documents.length });
-
-      // Drop empties for cleanliness
-      for (const k of ["cases","powers","executions","sessions","documents"]) {
-        if (!payload[k] || !payload[k].length) delete payload[k];
-      }
-      const sections = ["cases","powers","executions","sessions","documents"].filter((k) => payload[k]);
-      if (sections.length > 1) payload.kind = "mixed";
-      else if (sections.length === 1) payload.kind = sections[0];
-      return payload;
-    },
-  };
-
-  // ---------- Floating sync button ----------
-  function injectFab() {
-    if (document.getElementById("adala-najiz-fab")) return;
-    const fab = document.createElement("button");
-    fab.id = "adala-najiz-fab";
-    fab.title = "منصة العدالة — مزامنة بيانات ناجز";
-    fab.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`;
-    const menu = document.createElement("div");
-    menu.id = "adala-najiz-menu";
-    menu.innerHTML = `
-      <div class="ad-title">⚖️ منصة العدالة — المزامنة الهجينة v3.1</div>
-      <button class="ad-primary" id="ad-bot" style="background:linear-gradient(135deg,#16a34a,#065f46);color:#fff;border:1.5px solid #10b981;margin-bottom:6px">🚀 تشغيل البوت (كل الصفحات + التمرير + السحب)</button>
-      <button class="ad-primary" id="ad-cancel" style="display:none;background:rgba(239,68,68,0.2);color:#fca5a5;border:1px solid rgba(239,68,68,0.5);margin-bottom:6px">✋ إيقاف البوت</button>
-      <button class="ad-primary" data-k="">مزامنة الصفحة الحالية فقط</button>
-      <div class="ad-grid">
-        <button class="ad-chip" data-k="cases">القضايا</button>
-        <button class="ad-chip" data-k="sessions">الجلسات</button>
-        <button class="ad-chip" data-k="powers">الوكالات</button>
-        <button class="ad-chip" data-k="executions">التنفيذ</button>
-      </div>
-      <div class="ad-status" id="ad-status"></div>`;
-    document.body.appendChild(fab);
-    document.body.appendChild(menu);
-    fab.addEventListener("click", () => menu.classList.toggle("open"));
-    const setS = (msg, cls) => {
-      const s = menu.querySelector("#ad-status");
-      s.className = "ad-status show " + cls; s.textContent = msg;
-    };
-
-    let fabPoll = null;
-    menu.querySelector("#ad-bot").addEventListener("click", async () => {
-      try {
-        const cfg = await chrome.storage.local.get(["baseUrl", "syncToken"]);
-        if (!cfg.baseUrl || !cfg.syncToken) { setS("افتح إعدادات الإضافة وأدخل الرابط والرمز أولاً", "err"); return; }
-        setS("🤖 جارٍ تشغيل البوت التلقائي...", "info");
-        menu.querySelector("#ad-cancel").style.display = "block";
-        chrome.runtime.sendMessage({ type: "ADALA_AUTOPILOT_START_HERE", baseUrl: cfg.baseUrl, syncToken: cfg.syncToken });
-        if (fabPoll) clearInterval(fabPoll);
-        fabPoll = setInterval(async () => {
-          const r = await chrome.runtime.sendMessage({ type: "ADALA_AUTOPILOT_STATUS" });
-          const p = r?.progress; if (!p) return;
-          if (p.finished) { setS("✓ " + (p.message || "اكتمل"), "ok"); clearInterval(fabPoll); menu.querySelector("#ad-cancel").style.display = "none"; }
-          else if (p.error) { setS("⚠️ " + p.error, "err"); clearInterval(fabPoll); menu.querySelector("#ad-cancel").style.display = "none"; }
-          else if (p.message) setS(`🤖 [${p.currentStep||0}/${p.totalSteps||0}] ${p.message}`, "info");
-        }, 1000);
-      } catch (e) { setS("خطأ: " + (e?.message || e), "err"); }
+  function extractFieldsFromText(text) {
+    const fields = {};
+    text.split(/\n|\|/).forEach((line) => {
+      const parts = line.split(/:|：/);
+      if (parts.length >= 2) fields[clean(parts[0])] = clean(parts.slice(1).join(":"));
     });
+    return fields;
+  }
 
-    menu.querySelector("#ad-cancel").addEventListener("click", () => {
-      chrome.runtime.sendMessage({ type: "ADALA_CANCEL_BOT" });
-      setS("⏹ جارٍ إيقاف البوت...", "info");
-      if (fabPoll) clearInterval(fabPoll);
-      menu.querySelector("#ad-cancel").style.display = "none";
-    });
+  function trimPayload(value) {
+    if (value == null) return value;
+    const json = JSON.stringify(value);
+    if (json.length < 250000) return value;
+    return { __truncated: true, preview: json.slice(0, 240000) };
+  }
 
-    menu.querySelectorAll("[data-k]").forEach((b) => {
-      b.addEventListener("click", async () => {
-        const kf = b.dataset.k || null;
-        try {
-          const cfg = await chrome.storage.local.get(["baseUrl", "syncToken"]);
-          if (!cfg.baseUrl || !cfg.syncToken) { setS("افتح إعدادات الإضافة وأدخل رابط المنصة ورمز المزامنة أولاً", "err"); return; }
-          setS("جارٍ تمرير الصفحة وسحب البيانات...", "info");
-          const payload = await window.__ADALA_NAJIZ__.scrape(kf);
-          const total = (payload.cases?.length||0)+(payload.powers?.length||0)+
-                        (payload.executions?.length||0)+(payload.sessions?.length||0)+(payload.documents?.length||0);
-          if (!total) { setS("لم يتم العثور على بيانات قابلة للسحب في هذه الصفحة", "err"); return; }
-          setS(`جارٍ إرسال ${total} عنصر...`, "info");
-          const resp = await chrome.runtime.sendMessage({ type: "ADALA_SYNC", baseUrl: cfg.baseUrl, syncToken: cfg.syncToken, payload });
-          if (resp?.ok) {
-            const d = resp.data || {};
-            setS(`✓ تمت المزامنة — ${d.total ?? total} عنصر`, "ok");
-            chrome.storage.local.set({ lastSync: new Date().toISOString() });
-          } else setS("فشل: " + (resp?.error || "خطأ غير معروف"), "err");
-        } catch (e) { setS("خطأ: " + (e?.message || e), "err"); }
-      });
+  function valueByKeys(fields, pattern) {
+    const entries = Object.entries(fields || {});
+    const direct = entries.find(([key]) => pattern.test(key));
+    if (direct) return clean(String(direct[1]));
+    const nestedText = objectToText(fields);
+    return pattern.test(nestedText) ? "" : "";
+  }
+
+  function objectToText(value) {
+    if (value == null) return "";
+    if (typeof value === "string") return value;
+    if (typeof value !== "object") return String(value);
+    try { return JSON.stringify(value, null, 1); } catch { return String(value); }
+  }
+
+  function dedupeObjects(items) { return dedupeBy(items, (item) => JSON.stringify(item).slice(0, 1200)); }
+  function dedupeBy(items, keyFn) {
+    const seen = new Set();
+    return items.filter((item) => {
+      const key = keyFn(item);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
     });
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", injectFab);
-  else injectFab();
-
-  console.log("[منصة العدالة v3.1] أداة ناجز الهجينة (RPA + قراءة شاشة + نص احتياطي) جاهزة — نوع الصفحة:", detectKindFromUrl());
+  function match(text, regex, group = 0) { const found = clean(text).match(regex); return found ? clean(found[group] || found[0]) : ""; }
+  function matchDate(text) { return match(text, /\b\d{4}[\/-]\d{1,2}[\/-]\d{1,2}\b|\b\d{1,2}[\/-]\d{1,2}[\/-]\d{4}\b|\b\d{1,2}\s+[\u0600-\u06FF]+\s+\d{4}\b/); }
+  function firstLine(text) { return clean(text).split(/\n|\|/).find(Boolean)?.slice(0, 120) || ""; }
+  function clean(value) { return (value || "").toString().replace(/\s+/g, " ").trim(); }
+  function waitForPageQuiet() { return new Promise((resolve) => setTimeout(resolve, 900)); }
 })();
