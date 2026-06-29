@@ -1,0 +1,7 @@
+#!/bin/sh
+export SUPABASE_URL="https://sofurxihjwgmbosyzeib.supabase.co"
+export SUPABASE_PUBLISHABLE_KEY="sb_publishable_x3JQ_Rg2zRv69Ke_mW15Rw_djI0Ux4W"
+export SUPABASE_SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNvZnVyeGloandnbWJvc3l6ZWliIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MjY3MDcxOSwiZXhwIjoyMDk4MjQ2NzE5fQ.S3psucFwK2cMl9e0f6qwmP6TZHHInYOcGsU6Wc1hCKg"
+export PORT=8080
+tar xzf app.tar.gz
+exec node server/index.mjs
