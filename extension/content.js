@@ -800,7 +800,7 @@
     const menu = document.createElement("div");
     menu.id = "adala-najiz-menu";
     menu.innerHTML = `
-      <div class="ad-title">⚖️ منصة العدالة — مزامنة ناجز v4.1</div>
+      <div class="ad-title">⚖️ منصة العدالة — مزامنة ناجز v4.2</div>
       <button class="ad-primary" id="ad-bot" style="background:linear-gradient(135deg,#16a34a,#065f46);color:#fff;border:1.5px solid #10b981;margin-bottom:6px">🚀 تشغيل البوت (سحب كل الصفحات)</button>
       <button class="ad-primary" data-k="">مزامنة الصفحة الحالية فقط</button>
       <div class="ad-grid">
@@ -877,5 +877,5 @@
     return false;
   });
 
-  console.log("[منصة العدالة v4.1] أداة ناجز الهجينة جاهزة — نوع الصفحة:", detectKindFromUrl());
+  console.log("[منصة العدالة v4.2] أداة ناجز الهجينة جاهزة — نوع الصفحة:", detectKindFromUrl());
 })();

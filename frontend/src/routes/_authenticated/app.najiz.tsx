@@ -237,8 +237,8 @@ function NajizPage() {
         <Card className="card-3d border-none p-6">
           <div className="flex items-start justify-between mb-4">
             <div>
-              <h3 className="font-bold text-lg">إضافة متصفح Chrome v4.1</h3>
-              <p className="text-xs text-muted-foreground mt-1">إصدار محسّن: سكرابرز جداول هجينة + fallback مرن للقضايا والجلسات + إصلاح الإدراج في قاعدة البيانات. البوت يفتح ناجز، ينتظر نفاذ، يسحب كل البيانات ويرسلها للنظام بصيغة API الصحيحة.</p>
+              <h3 className="font-bold text-lg">إضافة متصفح Chrome v4.2</h3>
+              <p className="text-xs text-muted-foreground mt-1">إصدار 4.2: إزالة التحقق المسبق الذي كان يُوقف البوت + سكرابرز مرنة + إصلاح الإدراج. البوت يفتح ناجز، ينتظر نفاذ، يتنقل بين كل الصفحات ويرسل البيانات للنظام.</p>
             </div>
             <div className="grid h-12 w-12 place-items-center rounded-xl bg-primary/10">
               <Download className="h-6 w-6 text-primary" />
@@ -255,7 +255,7 @@ function NajizPage() {
             <strong>آلية العمل:</strong> البوت يفتح المتصفح ← ينتظر تسجيل الدخول يدوياً (نفاذ) ← يتنقل تلقائياً بين (القضايا/الأحكام/القرارات/الطلبات/التنفيذ/الوكالات/الجلسات) ← يمرر كل صفحة ← يسحب البيانات ← يرسلها للنظام ← النظام يوزعها على الأقسام المخصصة
           </div>
           <Button onClick={handleDownload} className="btn-gold gap-2 w-full" data-testid="download-extension-btn">
-            <Download className="h-4 w-4" /> تنزيل الإضافة v4.1 (ZIP)
+            <Download className="h-4 w-4" /> تنزيل الإضافة v4.2 (ZIP)
           </Button>
         </Card>
 

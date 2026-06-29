@@ -14,7 +14,7 @@ const DEFAULT_AUTOPILOT_STEPS = [
 ];
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("[منصة العدالة] الإضافة جاهزة — الإصدار 4.1.0");
+  console.log("[منصة العدالة] الإضافة جاهزة — الإصدار 4.2.0");
 });
 
 // =====================================================
@@ -303,17 +303,12 @@ async function runAutopilot({ tabId, baseUrl, syncToken, steps, skipLoginCheck =
       }
     }
 
-    // تحقق من رابط المزامنة
-    setProgress({ message: "التحقق من رابط المزامنة..." });
+    // ملاحظة: لا نُجري preflight GET — قد يفشل بسبب اختلافات في التحقق بين GET و POST.
+    // POST نفسه هو مصدر التحقق — إن كان الرمز خاطئاً، أول POST سيُظهر الخطأ.
     const sugg = suggestBaseUrl(baseUrl);
     if (sugg.changed) setProgress({ message: `ملاحظة: ${sugg.reason}` });
-    const verify = await verifyEndpoint(baseUrl, syncToken);
-    if (!verify.ok) {
-      setProgress({ running: false, error: `رابط/رمز المزامنة غير صحيح — ${verify.reason}` });
-      return { ok: false, error: verify.reason };
-    }
-    setProgress({ message: `✓ الرابط صحيح${verify.authenticated ? " والرمز معتمد" : ""}` });
-    await sleep(800);
+    setProgress({ message: "✓ بدء البوت — الرمز سيُختبر مع أول طلب POST" });
+    await sleep(500);
 
     for (let i = 0; i < useSteps.length; i++) {
       if (autopilotCancelled) {
